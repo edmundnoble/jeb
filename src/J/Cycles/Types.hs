@@ -86,6 +86,7 @@ data CycleState = CycleState {
 data ViewerState = ViewerState {
   _currentCycle :: CycleName
 , _currentInterval :: Interval Day
+, _currentScreenIndex :: Int
 , _cycleStates :: Map String CycleState
 } deriving Show
 
@@ -96,6 +97,7 @@ data PartialCycleState = PartialCycleState {
 data PartialViewerState = PartialViewerState {
   _partialCurrentCycle :: CycleName
 , _partialCurrentInterval :: Interval Day
+, _partialCurrentScreenIndex :: Int
 , _partialCycleStates :: Map String PartialCycleState
 } deriving Show
 

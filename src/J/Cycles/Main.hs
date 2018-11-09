@@ -256,7 +256,11 @@ loadViewerState logFolderPath ds = do
             historyTuples = ((,) <$> _historyName <*> (CycleState 0 <$> _historyTransitions)) <$> (h:hs)
             historyMap = Map.fromList historyTuples
           in
-            ViewerState focused ds historyMap
+            ViewerState {
+              _currentCycle = focused
+            , _currentInterval = ds
+            , _cycleStates = historyMap
+            }
 
         loadAllFiles :: NonEmpty String -> IO (Either LoadViewerStateError (NonEmpty CycleHistory))
         loadAllFiles cycleNames =
