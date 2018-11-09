@@ -9,7 +9,7 @@ module J.Cycles.Types(
 , DatedStatus(..)
 , CycleName(..)
 , CycleHistory(..), CycleState(..), PartialCycleState(..), PartialViewerState(..)
-, forgetCS, forgetVS
+, forgetCS, forgetVS, freshPVS
 , ViewerConfig(..), ViewerEvent(..), ViewerState(..)
 , InvalidStatus(..), LogParsingError(..), LoadViewerStateError(..)
 ) where
@@ -21,6 +21,8 @@ import Data.Time.Calendar(Day)
 import Data.Semigroup(Semigroup(..))
 import GHC.Generics(Generic)
 import Text.PrettyPrint.ANSI.Leijen(Pretty(..), text)
+
+import qualified Data.Map as Map
 
 data Status = On | Off deriving (Eq, Generic, NFData, Show)
 
@@ -106,10 +108,18 @@ forgetCS CycleState {_stateBoundOffset} =
   PartialCycleState {_partialStateBoundOffset = _stateBoundOffset}
 
 forgetVS :: ViewerState -> PartialViewerState
-forgetVS ViewerState {_currentInterval, _currentCycle, _cycleStates} = PartialViewerState {
+forgetVS ViewerState {_currentInterval, _currentCycle, _currentScreenIndex, _cycleStates} = PartialViewerState {
   _partialCurrentCycle = _currentCycle
 , _partialCurrentInterval = _currentInterval
+, _partialCurrentScreenIndex = _currentScreenIndex
 , _partialCycleStates = forgetCS <$> _cycleStates
+}
+
+freshPVS ds = PartialViewerState {
+  _partialCurrentCycle = CycleName Nothing
+, _partialCurrentInterval = ds
+, _partialCurrentScreenIndex = 0
+, _partialCycleStates = Map.empty
 }
 
 newtype InvalidStatus = InvalidStatus Char deriving (Eq, Show)

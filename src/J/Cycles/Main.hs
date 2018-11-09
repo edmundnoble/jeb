@@ -227,51 +227,6 @@ loadBetweenInterval ds filePath =
   in
     datedStatuses
 
--- this actually needs to take in a Map String Int too for the existing offsets,
--- as well as a CycleName for the currently selected cycle
-loadViewerState :: FilePath -> Interval Day -> IO (Either LoadViewerStateError ViewerState)
-loadViewerState logFolderPath ds = do
-  logExists <- D.doesDirectoryExist logFolderPath
-  if not logExists then
-    pure $ Left LogFolderMissing
-  else do
-    cycleNames <- D.listDirectory logFolderPath
-    case cycleNames of
-      [] -> pure $ Left LogFolderEmpty
-      (n:ns) ->
-        (fmap . fmap) historiesToState $ loadAllFiles (n:|ns)
-      where
-        loadFile :: String -> IO (Either (String, LogParsingError) CycleHistory)
-        loadFile cycleName =
-          let
-            cycleFilePath = logFolderPath FP.</> cycleName
-            rejigErrors = first ((,) cycleName)
-          in
-            (fmap (CycleHistory cycleName) . rejigErrors) <$> loadBetweenInterval ds cycleFilePath
-
-        historiesToState :: NonEmpty CycleHistory -> ViewerState
-        historiesToState (h:|hs) =
-          let
-            focused = (CycleName $ Just $ _historyName h)
-            historyTuples = ((,) <$> _historyName <*> (CycleState 0 <$> _historyTransitions)) <$> (h:hs)
-            historyMap = Map.fromList historyTuples
-          in
-            ViewerState {
-              _currentCycle = focused
-            , _currentInterval = ds
-            , _cycleStates = historyMap
-            }
-
-        loadAllFiles :: NonEmpty String -> IO (Either LoadViewerStateError (NonEmpty CycleHistory))
-        loadAllFiles cycleNames =
-          let
-            rejigErrors = first ErrorsParsingState . sequenceNE
-          in
-          if null cycleNames then
-            pure (Left LogFolderEmpty)
-          else do
-            rejigErrors <$> traverse loadFile (NonEmpty.sort cycleNames)
-
 -- always loads *all* at once
 loadToState ::
   ViewerConfig ->
@@ -323,6 +278,7 @@ loadToState vc pvs = do
     replaceState cs = ViewerState {
       _currentCycle = findNewCurrentCycle cs
     , _currentInterval = _partialCurrentInterval pvs
+    , _currentScreenIndex = _partialCurrentScreenIndex pvs
     , _cycleStates = cs
     }
 
@@ -439,12 +395,12 @@ adjustToday i = addDays i <$> (localDay <$> (utcToLocalTime <$> getCurrentTimeZo
 
 initialState ::
   ViewerConfig ->
-  IO (Either LoadViewerStateError ViewerState)
+  IO (Either (NonEmpty LoadViewerStateError) ViewerState)
 initialState vc = do
   left <- adjustToday (fromIntegral $ -(_configIntervalSize vc - 1))
   right <- adjustToday 1
   let ds = Interval left right
-  loadViewerState (_configLogPath vc) ds
+  loadToState vc (freshPVS ds)
 
 defaultTheme :: Theme
 defaultTheme =
