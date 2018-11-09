@@ -100,7 +100,7 @@ data ErrorWritingTagLinks =
 
 makeClassyPrisms 'UnresolvedTag
 
--- invariant: must be at least one error in an AllErrorParsed.
+-- invariant: must be at least one error in an AllErrors.
 data AllErrors =
     AllErrors [ErrorReadingTagMap] [ErrorReadingDocument] [ErrorFindingTag] [ErrorWritingTagLinks]
   deriving (Show)
