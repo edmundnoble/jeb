@@ -1,4 +1,4 @@
-module J.Indexing.Tagging(readBulletedTagMap, readPrefixedTags) where
+module J.Indexing.Streengs(readBulletedTagMap, readPrefixedTags) where
 
 import Prelude hiding((.), id)
 

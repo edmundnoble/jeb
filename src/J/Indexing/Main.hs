@@ -22,7 +22,7 @@ import System.Posix.Files(createSymbolicLink)
 import qualified Data.List.NonEmpty as NonEmpty
 
 import J.Indexing.Types
-import J.Indexing.Tagging
+import J.Indexing.Streengs
 
 catchSyncErrors :: IO () -> IO ()
 catchSyncErrors io =

@@ -21,7 +21,7 @@ executable j
   other-modules:       J.Main, J.CLI
                        , J.Logging
                        , J.Indexing.Main, J.Indexing.Types
-                       , J.Indexing.Tagging
+                       , J.Indexing.Streengs
                        , J.Cycles.Main, J.Cycles.Types
                        , J.Cycles.Streengs
   ghc-options:         -Wall -threaded +RTS -N -RTS
@@ -60,7 +60,7 @@ library j-lib
   exposed-modules:     J.Main, J.CLI
                      , J.Logging
                      , J.Indexing.Main, J.Indexing.Types
-                     , J.Indexing.Tagging
+                     , J.Indexing.Streengs
                      , J.Cycles.Main, J.Cycles.Types
                      , J.Cycles.Streengs
   build-depends:       base >=4.10 && <4.11
