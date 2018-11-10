@@ -17,10 +17,11 @@ import Brick.Widgets.Center
 import Brick.Widgets.Core
 import Brick.Widgets.Border
 import Brick.Widgets.Border.Style
-import Brick.Util(fg, on)
+import Brick.Util(bg, clamp, fg, on)
 
-import Control.Monad.IO.Class(liftIO)
 import Control.Applicative((<|>))
+import Control.Monad.IO.Class(liftIO)
+import Control.Monad.State
 import Data.Bifunctor(Bifunctor(..))
 import Data.Either(fromRight)
 import Data.Map(Map)
@@ -28,7 +29,7 @@ import Data.Maybe(fromMaybe)
 import Data.List(genericLength)
 import Data.List.NonEmpty(NonEmpty(..))
 import qualified Data.Map as Map(fromList, toList)
-import Data.Semigroup(Max(..))
+import Data.Semigroup((<>), Max(..))
 import Data.Semigroup.Foldable(Foldable1(..))
 import Data.Time(Day(..), addDays, diffDays, getCurrentTime, getCurrentTimeZone, localDay, utcToLocalTime)
 
@@ -144,47 +145,67 @@ prepareRawEntries ds entries =
   in
     clippedDenseDatedStatuses
 
-renderDay :: Int -> Int -> Bool -> String -> MetaStatus -> Widget CycleName
+defaultTheme :: Theme
+defaultTheme =
+  newTheme (Vty.brightWhite `on` Vty.black)
+           [ (attrName "cycleOn", fg Vty.green)
+           , (attrName "cycleOff", fg Vty.red)
+           , (attrName "cycleUnknown", fg Vty.white)
+           , (attrName "cycleSelectedOn", fg Vty.brightGreen)
+           , (attrName "cycleSelectedOff", fg Vty.brightRed)
+           , (attrName "cycleSelectedUnknown", fg Vty.brightWhite)
+           , (attrName "cursorOn", Vty.brightGreen `on` Vty.brightBlack)
+           , (attrName "cursorOff", Vty.brightRed `on` Vty.brightBlack)
+           , (attrName "cursorUnknown", Vty.brightWhite `on` Vty.brightBlack)
+           ]
+
+renderDay :: Int -> Int -> Bool -> String -> MetaStatus -> State Int (Widget CycleName)
 renderDay dayWidth offset selected name status =
   let
-    color :: Widget CycleName -> Widget CycleName
-    color = withAttr $ attrName $
-      if selected then
-        case status of
-          OnM ->      "cycleSelectedOn"
-          OffM ->     "cycleSelectedOff"
-          UnknownM -> "cycleSelectedUnknown"
-      else
-        case status of
-          OnM ->      "cycleOn"
-          OffM ->     "cycleOff"
-          UnknownM -> "cycleUnknown"
-
     -- this is NOT a hyphen, it's a line character
     lineChar = '─'
-    line = vLimit 1 $ color $ fill lineChar
 
     offW = if offset == 0 then "" else (" (" ++ show offset ++ ")")
   in
-    hLimit dayWidth $ hBox [line, str (" " ++ name ++ offW ++ " "), line]
+    do
+      cur <- get
+      modify (\u -> u - 1)
+      let color = withAttr $ attrName $ if
+        cur == 0 && selected then
+            case status of
+              OnM ->      "cursorOn"
+              OffM ->     "cursorOff"
+              UnknownM -> "cursorUnknown"
+          else if selected then
+            case status of
+              OnM ->      "cycleSelectedOn"
+              OffM ->     "cycleSelectedOff"
+              UnknownM -> "cycleSelectedUnknown"
+          else
+            case status of
+              OnM ->      "cycleOn"
+              OffM ->     "cycleOff"
+              UnknownM -> "cycleUnknown"
+      let line = vLimit 1 $ color $ fill lineChar
+      return (hLimit dayWidth $ hBox [line, str (" " ++ name ++ offW ++ " "), line])
 
-renderCycleState :: Int -> String -> Bool -> CycleState -> Widget CycleName
-renderCycleState dayWidth cycleName selected (CycleState { _stateBoundOffset = offset, _stateHistory = ch }) =
+renderCycleState :: Int -> Int -> String -> Bool -> CycleState -> Widget CycleName
+renderCycleState dayWidth cursor cycleName selected (CycleState { _stateBoundOffset = offset, _stateHistory = ch }) =
   let
     renderDatedStatus (DatedStatus i s) =
       let
         dayCount = diffDays (intervalEnd i) (intervalStart i)
         renderSingleDay = renderDay dayWidth offset selected cycleName s
-        renderAll = hBox (replicate (fromInteger dayCount) renderSingleDay)
+        renderAll = hBox <$> (sequenceA $ replicate (fromIntegral dayCount) renderSingleDay)
       in
         renderAll
-    widgets = NonEmpty.toList $ fmap renderDatedStatus ch
+    widgets = flip evalState cursor $ NonEmpty.toList <$> traverse renderDatedStatus ch
   in
     padBottom (Pad 1) (hBox widgets)
 
 -- TODO: flesh this out so that longer cycle names are wrapped properly
-cycleViewerWidget :: Int -> CycleName -> [(String, CycleState)] -> Widget CycleName
-cycleViewerWidget dayWidth (CycleName selected) (Nel ch) =
+cycleViewerWidget :: Int -> Int -> CycleName -> [(String, CycleState)] -> Widget CycleName
+cycleViewerWidget dayWidth cursor (CycleName selected) (Nel ch) =
   let
     maxCycleHeight :: Int
     maxCycleHeight = getMax $ foldMap1 Max (cycleHeights dayWidth (fst <$> ch))
@@ -192,12 +213,11 @@ cycleViewerWidget dayWidth (CycleName selected) (Nel ch) =
     vp :: String -> Widget CycleName -> Widget CycleName
     vp = flip viewport Horizontal . CycleName . Just
 
-    renderCH k = renderCycleState dayWidth k (Just k == selected)
-
+    renderCH k = renderCycleState dayWidth cursor k (Just k == selected)
   in
-    vBox (NonEmpty.toList (uncurry renderCH <$> ch))
+    vBox $ fmap (uncurry renderCH) (NonEmpty.toList ch)
 
-cycleViewerWidget _ _ Empty =
+cycleViewerWidget _ _ _ _ =
   str "No entries in log!"
 
 -- todo: display time deltas from today somewhere too
@@ -213,7 +233,7 @@ showViewerFromState vs =
     boundSize = fromIntegral $ intervalEnd bound `diffDays` intervalStart bound
     selected = _currentCycle vs
     histories = Map.toList (_cycleStates vs)
-    cycleViewer = cycleViewerWidget dayWidth selected histories
+    cycleViewer = cycleViewerWidget dayWidth (_currentScreenIndex vs) selected histories
     timeline = drawTimeline dayWidth bound
     decorate = padBottom (Pad 20) . padLeftRight 10 . center . jBorder . padTop (Pad 2)
   in
@@ -286,31 +306,47 @@ shiftIntervalRight :: Integral a => a -> Interval Day -> Interval Day
 shiftIntervalRight n (Interval s e) =
   let ad = addDays (fromIntegral n) in Interval (ad s) (ad e)
 
-shiftViewerRight :: Integral a => a -> ViewerConfig -> PartialViewerState -> IO ViewerState
-shiftViewerRight n vc pvs =
+moveViewerRight :: Integral a => a -> ViewerConfig -> PartialViewerState -> IO ViewerState
+moveViewerRight n vc pvs =
   let
     newInterval = shiftIntervalRight n (_partialCurrentInterval pvs)
 
     newViewerState = loadToState vc pvs { _partialCurrentInterval = newInterval }
   in
-    V.valueOr (const (error "error shifting state")) <$> newViewerState
+    V.valueOr (const (error "error moving viewer")) <$> newViewerState
 
-shiftCycleRight :: Integral a => a -> ViewerConfig -> PartialViewerState -> IO ViewerState
-shiftCycleRight n vc pvs =
+moveCycleRight :: Integral a => a -> ViewerConfig -> PartialViewerState -> IO ViewerState
+moveCycleRight n vc pvs =
   let
     cc = _partialCurrentCycle pvs
     pcs = _partialCycleStates pvs
 
-    shiftState st = st { _partialStateBoundOffset = _partialStateBoundOffset st + fromIntegral n }
+    moveState st = st { _partialStateBoundOffset = _partialStateBoundOffset st + fromIntegral n }
 
     updatedCycleStates = case cc of
       CycleName Nothing -> pcs
-      CycleName (Just curName) -> Map.update (Just . shiftState) curName pcs
+      CycleName (Just curName) -> Map.update (Just . moveState) curName pcs
 
     newViewerState =
       loadToState vc pvs { _partialCycleStates = updatedCycleStates }
   in
-    V.valueOr (const (error "error shifting cycle")) <$> newViewerState
+    V.valueOr (const (error "error moveing cycle")) <$> newViewerState
+
+moveCursorRight :: Integral a => a -> ViewerConfig -> ViewerState -> IO ViewerState
+moveCursorRight n vc vs =
+  let
+    ds = _currentInterval vs
+    curs = _currentScreenIndex vs
+    dayCount = fromIntegral $ diffDays (intervalEnd ds) (intervalStart ds)
+    movedCursor = curs + fromIntegral n
+    clippedCursor = clamp 0 (dayCount - 1) movedCursor
+    excess = movedCursor - clippedCursor
+    changeVS vs = vs { _currentScreenIndex = clippedCursor }
+  in
+    if excess /= 0 then
+      changeVS <$> moveViewerRight excess vc (forgetVS vs)
+    else
+      pure $ changeVS vs
 
 handleAppEvent ::
   ViewerConfig ->
@@ -318,10 +354,10 @@ handleAppEvent ::
   ViewerEvent ->
   EventM CycleName (Next ViewerState)
 handleAppEvent vc vs (MoveLeft n) = do
-  newState <- liftIO (shiftViewerRight (-n) vc (forgetVS vs))
+  newState <- liftIO (moveViewerRight (-n) vc (forgetVS vs))
   continue newState
 handleAppEvent vc vs (MoveRight n) = do
-  newState <- liftIO (shiftViewerRight n vc (forgetVS vs))
+  newState <- liftIO (moveViewerRight n vc (forgetVS vs))
   continue newState
 handleAppEvent _ vs MoveUp = do
   let states = _cycleStates vs
@@ -338,13 +374,23 @@ handleAppEvent _ vs@ViewerState { _currentCycle = CycleName n } MoveDown = do
   }
   continue newState
 handleAppEvent vc vs (MoveCycleLeft n) = do
-  newState <- liftIO (shiftCycleRight (-n) vc (forgetVS vs))
+  -- liftIO $ putStrLn "LEFT WAT"
+  newState <- liftIO (moveCycleRight (-n) vc (forgetVS vs))
   continue newState
 handleAppEvent vc vs (MoveCycleRight n) = do
-  newState <- liftIO (shiftCycleRight n vc (forgetVS vs))
+  -- liftIO $ putStrLn "RIGHT WAT"
+  newState <- liftIO (moveCycleRight n vc (forgetVS vs))
+  continue newState
+handleAppEvent vc vs (MoveCursorLeft n) = do
+  newState <- liftIO (moveCursorRight (-n) vc vs)
+  -- liftIO $ putStrLn ("left " ++ show (_currentScreenIndex newState))
+  continue newState
+handleAppEvent vc vs (MoveCursorRight n) = do
+  newState <- liftIO (moveCursorRight n vc vs)
+  -- liftIO $ putStrLn ("right " ++ show (_currentScreenIndex newState))
   continue newState
 handleAppEvent vc vs Refresh = do
-  -- note that this makes refresh a special case of shifting, the identity shift
+  -- note that this makes refresh a special case of moving, the identity move
   Right newState <- liftIO (loadToState vc (forgetVS vs))
   continue newState
 handleAppEvent vc _ ResetAll = do
@@ -358,17 +404,17 @@ handleVtyEvent ::
   Vty.Event ->
   EventM CycleName (Next ViewerState)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'a') []) =
-  handle $ MoveLeft 1
+  handle (MoveCursorLeft 1)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'd') []) =
-  handle $ MoveRight 1
+  handle (MoveCursorRight 1)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'a') [Vty.MCtrl]) =
-  handle $ MoveCycleLeft 1
+  handle (MoveLeft 1)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'd') [Vty.MCtrl]) =
-  handle $ MoveCycleRight 1
+  handle (MoveRight 1)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'A') _) =
-  handle $ MoveLeft 5
+  handle (MoveLeft 5)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'D') _) =
-  handle $ MoveRight 5
+  handle (MoveRight 5)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'w') _) =
   handle MoveUp
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 's') _) =
@@ -401,17 +447,6 @@ initialState vc = do
   right <- adjustToday 1
   let ds = Interval left right
   loadToState vc (freshPVS ds)
-
-defaultTheme :: Theme
-defaultTheme =
-  newTheme (Vty.brightWhite `on` Vty.black)
-           [ (attrName "cycleOn", fg Vty.green)
-           , (attrName "cycleOff", fg Vty.red)
-           , (attrName "cycleUnknown", fg Vty.white)
-           , (attrName "cycleSelectedOn", fg Vty.brightGreen)
-           , (attrName "cycleSelectedOff", fg Vty.brightRed)
-           , (attrName "cycleSelectedUnknown", fg Vty.brightWhite)
-           ]
 
 app :: AttrMap -> ViewerConfig -> App ViewerState ViewerEvent CycleName
 app mapping vc =

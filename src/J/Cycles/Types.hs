@@ -17,7 +17,7 @@ module J.Cycles.Types(
 import Control.DeepSeq(NFData)
 import Data.List.NonEmpty(NonEmpty)
 import Data.Map(Map)
-import Data.Time.Calendar(Day)
+import Data.Time.Calendar(Day, diffDays)
 import Data.Semigroup(Semigroup(..))
 import GHC.Generics(Generic)
 import Text.PrettyPrint.ANSI.Leijen(Pretty(..), text)
@@ -59,6 +59,8 @@ data ViewerEvent
   | ShowAllCycles
   | MoveLeft Int
   | MoveRight Int
+  | MoveCursorLeft Int
+  | MoveCursorRight Int
   | MoveCycleLeft Int
   | MoveCycleRight Int
   | MoveUp
