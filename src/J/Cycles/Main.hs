@@ -17,7 +17,7 @@ import Brick.Widgets.Center
 import Brick.Widgets.Core
 import Brick.Widgets.Border
 import Brick.Widgets.Border.Style
-import Brick.Util(bg, clamp, fg, on)
+import Brick.Util(clamp, fg, on)
 
 import Control.Applicative((<|>))
 import Control.Monad.IO.Class(liftIO)
@@ -54,13 +54,8 @@ fromListMaybe :: [a] -> Maybe (NonEmpty a)
 fromListMaybe [] = Nothing
 fromListMaybe (x:xs) = Just (x :| xs)
 
-{-# COMPLETE Nel, Empty #-}
-
 pattern Nel :: forall a. NonEmpty a -> [a]
 pattern Nel nel <- (fromListMaybe -> Just nel)
-
-pattern Empty :: forall a. [a]
-pattern Empty <- []
 
 jBorder :: Widget n -> Widget n
 jBorder = withBorderStyle unicode . borderWithLabel (str "J!")
@@ -341,23 +336,32 @@ moveCursorRight n vc vs =
     movedCursor = curs + fromIntegral n
     clippedCursor = clamp 0 (dayCount - 1) movedCursor
     excess = movedCursor - clippedCursor
-    changeVS vs = vs { _currentScreenIndex = clippedCursor }
+    setCursor s = s { _currentScreenIndex = clippedCursor }
   in
     if excess /= 0 then
-      changeVS <$> moveViewerRight excess vc (forgetVS vs)
+      setCursor <$> moveViewerRight excess vc (forgetVS vs)
     else
-      pure $ changeVS vs
+      pure $ setCursor vs
 
 handleAppEvent ::
   ViewerConfig ->
   ViewerState ->
   ViewerEvent ->
   EventM CycleName (Next ViewerState)
-handleAppEvent vc vs (MoveLeft n) = do
-  newState <- liftIO (moveViewerRight (-n) vc (forgetVS vs))
-  continue newState
-handleAppEvent vc vs (MoveRight n) = do
+handleAppEvent vc vs (MoveViewerRight n) = do
   newState <- liftIO (moveViewerRight n vc (forgetVS vs))
+  continue newState
+handleAppEvent vc vs (MoveCycleRight n) = do
+  -- liftIO $ putStrLn "RIGHT WAT"
+  newState <- liftIO (moveCycleRight n vc (forgetVS vs))
+  continue newState
+handleAppEvent vc vs (MoveCursorRight n) = do
+  newState <- liftIO (moveCursorRight n vc vs)
+  -- liftIO $ putStrLn ("right " ++ show (_currentScreenIndex newState))
+  continue newState
+handleAppEvent vc vs Refresh = do
+  -- note that this makes refresh a special case of moving, the identity move
+  Right newState <- liftIO (loadToState vc (forgetVS vs))
   continue newState
 handleAppEvent _ vs MoveUp = do
   let states = _cycleStates vs
@@ -373,26 +377,6 @@ handleAppEvent _ vs@ViewerState { _currentCycle = CycleName n } MoveDown = do
     Just x  -> (CycleName . Just . fromMaybe x) (fst <$> Map.lookupGT x states)
   }
   continue newState
-handleAppEvent vc vs (MoveCycleLeft n) = do
-  -- liftIO $ putStrLn "LEFT WAT"
-  newState <- liftIO (moveCycleRight (-n) vc (forgetVS vs))
-  continue newState
-handleAppEvent vc vs (MoveCycleRight n) = do
-  -- liftIO $ putStrLn "RIGHT WAT"
-  newState <- liftIO (moveCycleRight n vc (forgetVS vs))
-  continue newState
-handleAppEvent vc vs (MoveCursorLeft n) = do
-  newState <- liftIO (moveCursorRight (-n) vc vs)
-  -- liftIO $ putStrLn ("left " ++ show (_currentScreenIndex newState))
-  continue newState
-handleAppEvent vc vs (MoveCursorRight n) = do
-  newState <- liftIO (moveCursorRight n vc vs)
-  -- liftIO $ putStrLn ("right " ++ show (_currentScreenIndex newState))
-  continue newState
-handleAppEvent vc vs Refresh = do
-  -- note that this makes refresh a special case of moving, the identity move
-  Right newState <- liftIO (loadToState vc (forgetVS vs))
-  continue newState
 handleAppEvent vc _ ResetAll = do
   Right newState <- liftIO $ initialState vc
   continue newState
@@ -404,17 +388,17 @@ handleVtyEvent ::
   Vty.Event ->
   EventM CycleName (Next ViewerState)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'a') []) =
-  handle (MoveCursorLeft 1)
+  handle (MoveCursorRight (-1))
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'd') []) =
   handle (MoveCursorRight 1)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'a') [Vty.MCtrl]) =
-  handle (MoveLeft 1)
+  handle (MoveViewerRight (-1))
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'd') [Vty.MCtrl]) =
-  handle (MoveRight 1)
+  handle (MoveViewerRight 1)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'A') _) =
-  handle (MoveLeft 5)
+  handle (MoveViewerRight (-5))
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'D') _) =
-  handle (MoveRight 5)
+  handle (MoveViewerRight 5)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'w') _) =
   handle MoveUp
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 's') _) =

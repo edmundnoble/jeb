@@ -3,12 +3,8 @@
 module J.CLI(opts) where
 
 import Control.Applicative((<|>))
--- import Data.Time(Day)
 import Data.Semigroup((<>))
-
-import qualified Data.Char as Char
 import qualified Options.Applicative as Options
-import qualified System.Console.ANSI as ANSI
 
 import J.Cycles.Types
 
@@ -40,10 +36,10 @@ logPath =
 width :: Options.Parser Int
 width = Options.option Options.auto (Options.long "width" <> Options.value 7)
 
-preAuto :: Read a => (String -> String) -> Options.ReadM a
-preAuto f = Options.eitherReader $ \arg -> case reads (f arg) of
-    [(r, "")] -> return r
-    _         -> Left $ "cannot parse value `" ++ arg ++ "'"
+-- preAuto :: Read a => (String -> String) -> Options.ReadM a
+-- preAuto f = Options.eitherReader $ \arg -> case reads (f arg) of
+--     [(r, "")] -> return r
+--     _         -> Left $ "cannot parse value `" ++ arg ++ "'"
 
 viewerConfig :: Options.Parser ViewerConfig
 viewerConfig = do

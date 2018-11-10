@@ -88,7 +88,6 @@ scratch d = unsafePerformIO $ do
   searchForDays d "entries" >>= print
 
 scratchI t = unsafePerformIO $ do
-  let getStatus (Entry _ st) = st
   entries <- searchForDays t "entries"
   print entries
 
