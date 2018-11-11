@@ -26,11 +26,9 @@ import Data.Bifunctor(Bifunctor(..))
 import Data.Either(fromRight)
 import Data.Map(Map)
 import Data.Maybe(fromMaybe)
-import Data.List(genericLength)
 import Data.List.NonEmpty(NonEmpty(..))
 import qualified Data.Map as Map(fromList, toList)
 import Data.Semigroup((<>), Max(..))
-import Data.Semigroup.Foldable(Foldable1(..))
 import Data.Time(Day(..), addDays, diffDays, getCurrentTime, getCurrentTimeZone, localDay, utcToLocalTime)
 
 import J.Cycles.Types
@@ -42,13 +40,6 @@ import qualified Data.Validation as V
 import qualified Graphics.Vty as Vty
 import qualified System.Directory as D
 import qualified System.FilePath.Posix as FP
-
-longestCycleName :: NonEmpty String -> Int
-longestCycleName = getMax . foldMap1 (Max . textWidth)
-
-cycleHeights :: Int -> NonEmpty String -> NonEmpty Int
-cycleHeights dayWidth xs =
-  fmap (div <$> genericLength <*> const dayWidth) xs
 
 fromListMaybe :: [a] -> Maybe (NonEmpty a)
 fromListMaybe [] = Nothing
@@ -185,7 +176,7 @@ renderDay dayWidth offset selected name status =
       return (hLimit dayWidth $ hBox [line, str (" " ++ name ++ offW ++ " "), line])
 
 renderCycleState :: Int -> Int -> String -> Bool -> CycleState -> Widget CycleName
-renderCycleState dayWidth cursor cycleName selected (CycleState { _stateBoundOffset = offset, _stateHistory = ch }) =
+renderCycleState dayWidth cursor cycleName selected (CycleState { _cycleBoundOffset = offset, _cycleHistory = ch }) =
   let
     renderDatedStatus (DatedStatus i s) =
       let
@@ -202,9 +193,6 @@ renderCycleState dayWidth cursor cycleName selected (CycleState { _stateBoundOff
 cycleViewerWidget :: Int -> Int -> CycleName -> [(String, CycleState)] -> Widget CycleName
 cycleViewerWidget dayWidth cursor (CycleName selected) (Nel ch) =
   let
-    maxCycleHeight :: Int
-    maxCycleHeight = getMax $ foldMap1 Max (cycleHeights dayWidth (fst <$> ch))
-
     vp :: String -> Widget CycleName -> Widget CycleName
     vp = flip viewport Horizontal . CycleName . Just
 
@@ -224,11 +212,11 @@ showViewerFromState :: ViewerState -> [Widget CycleName]
 showViewerFromState vs =
   let
     dayWidth = 18
-    bound = _currentInterval vs
+    bound = _interval vs
     boundSize = fromIntegral $ intervalEnd bound `diffDays` intervalStart bound
-    selected = _currentCycle vs
+    selected = _selectedCycle vs
     histories = Map.toList (_cycleStates vs)
-    cycleViewer = cycleViewerWidget dayWidth (_currentScreenIndex vs) selected histories
+    cycleViewer = cycleViewerWidget dayWidth (_cursor vs) selected histories
     timeline = drawTimeline dayWidth bound
     decorate = padBottom (Pad 20) . padLeftRight 10 . center . jBorder . padTop (Pad 2)
   in
@@ -262,7 +250,7 @@ loadToState vc pvs = do
         return $ V.toEither $ fmap replaceState csv
   where
     pcs = _partialCycleStates pvs
-    ci = _partialCurrentInterval pvs
+    ci = _partialInterval pvs
 
     load :: String -> IO (Either LogParsingError CycleState)
     load name =
@@ -279,7 +267,7 @@ loadToState vc pvs = do
 
     findNewCurrentCycle :: Map String CycleState -> CycleName
     findNewCurrentCycle cs =
-      case _partialCurrentCycle pvs of
+      case _partialSelectedCycle pvs of
         CycleName (Just n) ->
           let
             le = Map.lookupLE n cs
@@ -291,9 +279,10 @@ loadToState vc pvs = do
 
     replaceState :: Map String CycleState -> ViewerState
     replaceState cs = ViewerState {
-      _currentCycle = findNewCurrentCycle cs
-    , _currentInterval = _partialCurrentInterval pvs
-    , _currentScreenIndex = _partialCurrentScreenIndex pvs
+      _selectedCycle = findNewCurrentCycle cs
+    , _interval = _partialInterval pvs
+    , _pendingEdits = _partialPendingEdits pvs
+    , _cursor = _partialCursor pvs
     , _cycleStates = cs
     }
 
@@ -304,16 +293,16 @@ shiftIntervalRight n (Interval s e) =
 moveViewerRight :: Integral a => a -> ViewerConfig -> PartialViewerState -> IO ViewerState
 moveViewerRight n vc pvs =
   let
-    newInterval = shiftIntervalRight n (_partialCurrentInterval pvs)
+    newInterval = shiftIntervalRight n (_partialInterval pvs)
 
-    newViewerState = loadToState vc pvs { _partialCurrentInterval = newInterval }
+    newViewerState = loadToState vc pvs { _partialInterval = newInterval }
   in
     V.valueOr (const (error "error moving viewer")) <$> newViewerState
 
 moveCycleRight :: Integral a => a -> ViewerConfig -> PartialViewerState -> IO ViewerState
 moveCycleRight n vc pvs =
   let
-    cc = _partialCurrentCycle pvs
+    cc = _partialSelectedCycle pvs
     pcs = _partialCycleStates pvs
 
     moveState st = st { _partialStateBoundOffset = _partialStateBoundOffset st + fromIntegral n }
@@ -330,13 +319,13 @@ moveCycleRight n vc pvs =
 moveCursorRight :: Integral a => a -> ViewerConfig -> ViewerState -> IO ViewerState
 moveCursorRight n vc vs =
   let
-    ds = _currentInterval vs
-    curs = _currentScreenIndex vs
+    ds = _interval vs
+    curs = _cursor vs
     dayCount = fromIntegral $ diffDays (intervalEnd ds) (intervalStart ds)
     movedCursor = curs + fromIntegral n
     clippedCursor = clamp 0 (dayCount - 1) movedCursor
     excess = movedCursor - clippedCursor
-    setCursor s = s { _currentScreenIndex = clippedCursor }
+    setCursor s = s { _cursor = clippedCursor }
   in
     if excess /= 0 then
       setCursor <$> moveViewerRight excess vc (forgetVS vs)
@@ -357,7 +346,7 @@ handleAppEvent vc vs (MoveCycleRight n) = do
   continue newState
 handleAppEvent vc vs (MoveCursorRight n) = do
   newState <- liftIO (moveCursorRight n vc vs)
-  -- liftIO $ putStrLn ("right " ++ show (_currentScreenIndex newState))
+  -- liftIO $ putStrLn ("right " ++ show (_cursor newState))
   continue newState
 handleAppEvent vc vs Refresh = do
   -- note that this makes refresh a special case of moving, the identity move
@@ -365,14 +354,14 @@ handleAppEvent vc vs Refresh = do
   continue newState
 handleAppEvent _ vs MoveUp = do
   let states = _cycleStates vs
-  let newState = vs { _currentCycle = case _currentCycle vs of
+  let newState = vs { _selectedCycle = case _selectedCycle vs of
     CycleName Nothing -> CycleName $ (fst . fst) <$> Map.minViewWithKey states
     CycleName (Just x) -> (CycleName . Just . fromMaybe x) (fst <$> Map.lookupLT x states)
   }
   continue newState
-handleAppEvent _ vs@ViewerState { _currentCycle = CycleName n } MoveDown = do
+handleAppEvent _ vs@ViewerState { _selectedCycle = CycleName n } MoveDown = do
   let states = _cycleStates vs
-  let newState = vs { _currentCycle = case n of
+  let newState = vs { _selectedCycle = case n of
     Nothing -> CycleName $ (fst . fst) <$> Map.maxViewWithKey states
     Just x  -> (CycleName . Just . fromMaybe x) (fst <$> Map.lookupGT x states)
   }
