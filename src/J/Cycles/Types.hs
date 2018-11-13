@@ -17,13 +17,13 @@ module J.Cycles.Types(
 
 import Control.DeepSeq(NFData)
 import Data.List.NonEmpty(NonEmpty)
-import Data.Map(Map)
+import Data.Map.Strict(Map)
 import Data.Time.Calendar(Day)
 import Data.Semigroup(Semigroup(..))
 import GHC.Generics(Generic)
 import Text.PrettyPrint.ANSI.Leijen(Pretty(..), text)
 
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 
 data Status = On | Off deriving (Eq, Generic, NFData, Show)
 

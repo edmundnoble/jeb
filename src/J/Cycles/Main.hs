@@ -24,10 +24,9 @@ import Control.Monad.IO.Class(liftIO)
 import Control.Monad.State
 import Data.Bifunctor(Bifunctor(..))
 import Data.Either(fromRight)
-import Data.Map(Map)
+import Data.Map.Strict(Map)
 import Data.Maybe(fromMaybe)
 import Data.List.NonEmpty(NonEmpty(..))
-import qualified Data.Map as Map(fromList, toList)
 import Data.Semigroup((<>), Max(..))
 import Data.Time(Day(..), addDays, diffDays, getCurrentTime, getCurrentTimeZone, localDay, utcToLocalTime)
 
@@ -35,7 +34,7 @@ import J.Cycles.Types
 import qualified J.Cycles.Streengs as Streengs
 
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 import qualified Data.Validation as V
 import qualified Graphics.Vty as Vty
 import qualified System.Directory as D
@@ -331,6 +330,19 @@ moveCursorRight n vc vs =
     else
       pure $ setCursor vs
 
+toggleEdit :: Day -> PendingEdits -> PendingEdits
+toggleEdit d (PendingEdits pe) = undefined
+
+toggle :: ViewerState -> ViewerState
+toggle vs =
+  let
+    CycleName cc = _selectedCycle vs
+    modState cycleState =
+      cycleState { _cyclePendingEdits = _cyclePendingEdits cycleState }
+    cs = cc >>= flip Map.lookup (_cycleStates vs)
+  in
+    undefined
+
 handleAppEvent ::
   ViewerConfig ->
   ViewerState ->
@@ -366,6 +378,8 @@ handleAppEvent _ vs@ViewerState { _selectedCycle = CycleName n } MoveDown = do
 handleAppEvent vc _ ResetAll = do
   Right newState <- liftIO $ initialState vc
   continue newState
+handleAppEvent _ vs Toggle = do
+  continue (toggle vs)
 handleAppEvent _ _ _ = error "unknown app event"
 
 handleVtyEvent ::
