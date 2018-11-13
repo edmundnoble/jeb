@@ -65,6 +65,9 @@ data ViewerEvent
   | MoveDown
   | Refresh
   | ResetAll
+  | Toggle
+  | Delete
+  | Save
 
 newtype CycleName = CycleName (Maybe String) deriving (Eq, Ord, Show)
 

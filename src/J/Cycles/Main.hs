@@ -383,19 +383,25 @@ handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'a') [Vty.MCtrl]) =
   handle (MoveViewerRight (-1))
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'd') [Vty.MCtrl]) =
   handle (MoveViewerRight 1)
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'A') _) =
+handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'A') []) =
   handle (MoveViewerRight (-5))
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'D') _) =
+handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'D') []) =
   handle (MoveViewerRight 5)
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'w') _) =
+handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'w') []) =
   handle MoveUp
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 's') _) =
+handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 's') []) =
   handle MoveDown
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'R') _) =
+handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'R') []) =
   handle ResetAll
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar ' ') _) =
+handleVtyEvent handle _ (Vty.EvKey (Vty.KChar ' ') []) =
   handle Refresh
-handleVtyEvent _ vs (Vty.EvKey Vty.KEsc _) =
+handleVtyEvent handle _ (Vty.EvKey Vty.KDel []) =
+  handle Delete
+handleVtyEvent handle _ (Vty.EvKey Vty.KEnter []) =
+  handle Toggle
+handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 's') [Vty.MCtrl]) =
+  handle Save
+handleVtyEvent _ vs (Vty.EvKey Vty.KEsc []) =
   halt vs
 handleVtyEvent _ vs _ =
   continue vs
