@@ -8,6 +8,7 @@ module J.Cycles.Types(
 , Interval(..), intervalStart, intervalEnd
 , DatedStatus(..)
 , CycleName(..)
+, PendingEdits(..)
 , CycleHistory(..), CycleState(..), PartialCycleState(..), PartialViewerState(..)
 , forgetCS, forgetVS, freshPVS
 , ViewerConfig(..), ViewerEvent(..), ViewerState(..)
@@ -79,11 +80,6 @@ data ViewerConfig = ViewerConfig {
 , _configIntervalSize :: Int
 } deriving Show
 
-data CycleState = CycleState {
-  _cycleBoundOffset :: Int
-, _cycleHistory :: NonEmpty DatedStatus
-} deriving Show
-
 newtype PendingEdits = PendingEdits (Map Day MetaStatus)
   deriving Show
 
@@ -91,36 +87,40 @@ instance Monoid (PendingEdits) where
   mappend (PendingEdits e1) (PendingEdits e2) = PendingEdits (Map.union e1 e2)
   mempty = PendingEdits Map.empty
 
+data CycleState = CycleState {
+  _cycleBoundOffset :: Int
+, _cycleHistory :: NonEmpty DatedStatus
+, _cyclePendingEdits :: PendingEdits
+} deriving Show
+
+data PartialCycleState = PartialCycleState {
+  _partialBoundOffset :: Int
+, _partialPendingEdits :: PendingEdits
+} deriving Show
+
 data ViewerState = ViewerState {
   _cursor :: Int
 , _cycleStates :: Map String CycleState
 , _interval :: Interval Day
-, _pendingEdits :: PendingEdits
 , _selectedCycle :: CycleName
-} deriving Show
-
-data PartialCycleState = PartialCycleState {
-  _partialStateBoundOffset :: Int
 } deriving Show
 
 data PartialViewerState = PartialViewerState {
   _partialCursor :: Int
 , _partialCycleStates :: Map String PartialCycleState
 , _partialInterval :: Interval Day
-, _partialPendingEdits :: PendingEdits
 , _partialSelectedCycle :: CycleName
 } deriving Show
 
 forgetCS :: CycleState -> PartialCycleState
-forgetCS CycleState {_cycleBoundOffset} =
-  PartialCycleState {_partialStateBoundOffset = _cycleBoundOffset}
+forgetCS CycleState {_cycleBoundOffset, _cyclePendingEdits} =
+  PartialCycleState {_partialBoundOffset = _cycleBoundOffset, _partialPendingEdits = _cyclePendingEdits}
 
 forgetVS :: ViewerState -> PartialViewerState
-forgetVS ViewerState {_interval, _selectedCycle, _cursor, _pendingEdits, _cycleStates} = PartialViewerState {
+forgetVS ViewerState {_interval, _selectedCycle, _cursor, _cycleStates} = PartialViewerState {
   _partialCursor = _cursor
 , _partialCycleStates = forgetCS <$> _cycleStates
 , _partialInterval = _interval
-, _partialPendingEdits = _pendingEdits
 , _partialSelectedCycle = _selectedCycle
 }
 
@@ -130,7 +130,6 @@ freshPVS ds = PartialViewerState {
 , _partialCycleStates = Map.empty
 , _partialSelectedCycle = CycleName Nothing
 , _partialInterval = ds
-, _partialPendingEdits = mempty
 }
 
 newtype InvalidStatus = InvalidStatus Char deriving (Eq, Show)

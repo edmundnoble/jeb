@@ -255,9 +255,9 @@ loadToState vc pvs = do
     load :: String -> IO (Either LogParsingError CycleState)
     load name =
       let
-        offset = maybe 0 _partialStateBoundOffset (Map.lookup name pcs)
+        offset = maybe 0 _partialBoundOffset (Map.lookup name pcs)
       in
-        fmap (CycleState offset) <$> loadBetweenInterval (shiftIntervalRight offset ci) (_configLogPath vc FP.</> name)
+        fmap (flip (CycleState offset) mempty) <$> loadBetweenInterval (shiftIntervalRight offset ci) (_configLogPath vc FP.</> name)
 
     fixupError :: String -> LogParsingError -> NonEmpty LoadViewerStateError
     fixupError k v = (singletonNE . ErrorsParsingState . singletonNE) (k,v)
@@ -281,7 +281,6 @@ loadToState vc pvs = do
     replaceState cs = ViewerState {
       _selectedCycle = findNewCurrentCycle cs
     , _interval = _partialInterval pvs
-    , _pendingEdits = _partialPendingEdits pvs
     , _cursor = _partialCursor pvs
     , _cycleStates = cs
     }
@@ -305,7 +304,7 @@ moveCycleRight n vc pvs =
     cc = _partialSelectedCycle pvs
     pcs = _partialCycleStates pvs
 
-    moveState st = st { _partialStateBoundOffset = _partialStateBoundOffset st + fromIntegral n }
+    moveState st = st { _partialBoundOffset = _partialBoundOffset st + fromIntegral n }
 
     updatedCycleStates = case cc of
       CycleName Nothing -> pcs

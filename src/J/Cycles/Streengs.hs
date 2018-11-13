@@ -5,8 +5,9 @@
 
 module J.Cycles.Streengs(allPtrs, searchForDays, Entry(..), RawStatus(..), consLog) where
 
+import Data.Foldable(traverse_)
 import Data.List(intercalate)
-import Data.Time(Day(..))
+import Data.Time(Day(..), addDays)
 import Data.Word(Word8)
 
 import Foreign.Ptr(Ptr, castPtr, minusPtr, plusPtr)
@@ -16,6 +17,8 @@ import GHC.Magic(inline)
 import GHC.Prim(chr#, word2Int#)
 import GHC.Types(Char(C#))
 import GHC.Word(Word8(W8#), Word64)
+
+import qualified Data.Map as Map
 
 import qualified System.IO.MMap as MMap
 import qualified System.IO.Unsafe as U
@@ -279,6 +282,20 @@ memcpy tgt (SizedPtr s src) = go 0 where
   go n = do
     peek (inc n src) >>= poke (inc n tgt)
     go (n + 1)
+
+singInterval :: Day -> Interval Day
+singInterval d = Interval d (addDays 1 d)
+
+applyEdits :: PendingEdits -> FilePath -> IO ()
+applyEdits (PendingEdits edits) logPath = traverse_ (uncurry loadEdit) (Map.toList edits)
+  where
+    -- How the FUCK do I insert unknown? Do I have to store unknown?
+    -- wouldn't solve anything, we still won't be populated for unknown times anyway
+    -- gonna have to delete/shrink other intervals
+    loadEdit :: Day -> MetaStatus -> IO ()
+    loadEdit d UnknownM = error "fuck, I can't do that yet"
+    loadEdit d OffM = consLog (Entry (singInterval d) N) logPath
+    loadEdit d OnM = consLog (Entry (singInterval d) Y) logPath
 
 -- File names should look like n-k.log if it's the nth digit from the right,
 -- and the value at that digit is k.
