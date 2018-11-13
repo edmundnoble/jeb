@@ -340,12 +340,10 @@ handleAppEvent vc vs (MoveViewerRight n) = do
   newState <- liftIO (moveViewerRight n vc (forgetVS vs))
   continue newState
 handleAppEvent vc vs (MoveCycleRight n) = do
-  -- liftIO $ putStrLn "RIGHT WAT"
   newState <- liftIO (moveCycleRight n vc (forgetVS vs))
   continue newState
 handleAppEvent vc vs (MoveCursorRight n) = do
   newState <- liftIO (moveCursorRight n vc vs)
-  -- liftIO $ putStrLn ("right " ++ show (_cursor newState))
   continue newState
 handleAppEvent vc vs Refresh = do
   -- note that this makes refresh a special case of moving, the identity move
