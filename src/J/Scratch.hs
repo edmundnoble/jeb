@@ -111,20 +111,16 @@ writeEs fp as = do
   else
     D.removeFile fp *> write
 
-{-# inline readS #-}
 readS :: forall a. Storable a => FilePath -> IO [a]
 readS fp =
   MMap.mmapWithFilePtr fp MMap.ReadOnly Nothing (\(p, s) -> readP (castPtr p) s)
 
-{-# inline readP #-}
 readP :: forall a. Storable a => Ptr a -> Int -> IO [a]
 readP ptr s = traverse peek (allPtrs ptr s)
 
-{-# inline readEs #-}
 readEs :: FilePath -> IO [Entry]
 readEs = readS
 
-{-# inline mergeLs #-}
 mergeLs :: (a -> a -> Ordering) -> [a] -> [a] -> [a]
 mergeLs f = go where
   go (x:xs) (y:ys) = case x `f` y of
