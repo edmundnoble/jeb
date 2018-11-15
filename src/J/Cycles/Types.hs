@@ -99,8 +99,8 @@ printViewerConfig ViewerConfig {
   _configLogPath,
   _configIntervalSize
 } =
-  "Config log path: " ++ _configLogPath ++
-  "\nConfig interval size: " ++ show _configIntervalSize
+  "Log path: " ++ _configLogPath ++
+  "\nInterval size: " ++ show _configIntervalSize
 
 newtype PendingEdits = PendingEdits { _getPendingEdits :: Map Day MetaStatus }
   deriving Show

@@ -20,9 +20,11 @@ import Control.Monad.IO.Class(liftIO)
 import Data.Bifunctor(Bifunctor(..))
 import Data.Either(fromRight)
 import Data.Foldable(find, toList)
+import Data.Functor(($>))
 import Data.Functor.Compose(Compose(..))
 import Data.Map.Strict(Map)
 import Data.Maybe(fromMaybe)
+import Data.List(isSuffixOf)
 import Data.List.NonEmpty(NonEmpty(..))
 import Data.Time(Day(..), addDays, diffDays, getCurrentTime, getCurrentTimeZone, localDay, utcToLocalTime)
 
@@ -139,12 +141,10 @@ loadToState vc pvs = do
   if not logExists then
     pure $ Left $ singletonNE LogFolderMissing
   else do
-    cycleNames <- D.listDirectory logFolderPath
+    cycleNames <- filter (not . isSuffixOf ".bak") <$> D.listDirectory logFolderPath
     case cycleNames of
       [] -> pure $ Left $ singletonNE LogFolderEmpty
       ns -> do
-        -- ~~ugh fuck this is ugly~~
-        -- not anymore!
         csv <- getCompose $ buildMapA (Compose . loadValidation) ns
         return $ V.toEither $ fmap remakeViewerState csv
   where
@@ -189,6 +189,9 @@ loadToState vc pvs = do
     , _cursor = _partialCursor pvs
     , _cycleStates = cs
     }
+
+doToAll :: Applicative f => (String -> CycleState -> f CycleState) -> ViewerState -> f ViewerState
+doToAll f vs = fmap (\cs -> vs { _cycleStates = cs }) (Map.traverseWithKey f (_cycleStates vs))
 
 shiftIntervalRight :: Integral a => a -> Interval Day -> Interval Day
 shiftIntervalRight n (Interval s e) =
@@ -285,6 +288,13 @@ delCurrentStatus = alterCurrentStatus (const $ const UnknownM)
 resetCell :: ViewerState -> ViewerState
 resetCell = alterCurrentStatus (const . id)
 
+saveEditsAndReload :: ViewerConfig -> ViewerState -> IO (Either (NonEmpty LoadViewerStateError) ViewerState)
+saveEditsAndReload vc vs = do
+  let saveCycle name state = Streengs.applyEdits (_cyclePendingEdits state) (_configLogPath vc FP.</> name) $> (state { _cyclePendingEdits = mempty })
+  allSaved <- doToAll saveCycle vs
+  let pvs = forgetVS allSaved
+  loadToState vc pvs
+
 handleAppEvent ::
   ViewerConfig ->
   ViewerEvent ->
@@ -336,10 +346,16 @@ handleAppEvent _ Toggle vs = do
 handleAppEvent _ Delete vs = do
   continue (delCurrentStatus vs)
 
+handleAppEvent vc Save vs = do
+  -- when errors become recoverable, don't throw edits out
+  let err e = dumpAndDieC vc vs $ "saving edits failed: " ++ show e
+  newStateOrErr <- liftIO $ saveEditsAndReload vc vs
+  continue =<< either err pure newStateOrErr
+
 handleAppEvent _ Debug vs = do
   liftIO (putStrLn $ printViewerState vs) *> continue vs
 
-handleAppEvent vc e vs = dumpAndDieC vc vs $ "unknown app event: " ++ show e
+handleAppEvent vc e vs = dumpAndDieC vc vs $ "Unhandled app event received; this may mean a feature is not yet implemented: " ++ show e
 
 handleVtyEvent ::
   (ViewerEvent -> ViewerState -> EventM () (Next ViewerState)) ->

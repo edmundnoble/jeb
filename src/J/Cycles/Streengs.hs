@@ -3,7 +3,7 @@
 {-# language LambdaCase #-}
 {-# language ScopedTypeVariables #-}
 
-module J.Cycles.Streengs(allPtrs, searchForDays, Entry(..), RawStatus(..), consLog) where
+module J.Cycles.Streengs(allPtrs, applyEdits, searchForDays, Entry(..), RawStatus(..), consLog) where
 
 import Data.Foldable(traverse_)
 import Data.List(intercalate)
@@ -118,6 +118,8 @@ binRangeQuery getKeys !k !szp = eval (go szp) where
       peekEnd <- peek end
       let kStart = contpareIntervals k (getKeys peekStart)
       let kEnd = contpareIntervals k (getKeys peekEnd)
+      -- putStrLn (show start ++ " " ++ show peekStart ++ " -> " ++ show end ++ " " ++ show peekEnd)
+      -- putStrLn $ "kStart: " ++ show kStart ++ ", kEnd: " ++ show kEnd
       let whole = Interval (intervalStart $ getKeys peekStart) (intervalEnd $ getKeys peekEnd)
 
       if not $ (whole `intersects` k) then
@@ -134,9 +136,11 @@ binRangeQuery getKeys !k !szp = eval (go szp) where
         let halfSize = size `div` 2
         let mid = start `addIncrements` halfSize
         peekMid <- peek mid
-        let recRight = U.unsafeInterleaveIO $ go (SizedPtr (halfSize - 1) (addIncrements mid 1))
-        let recLeft = U.unsafeInterleaveIO $ go (SizedPtr (halfSize) start)
+        -- putStrLn $ "mid: " ++ show mid
+        let recRight = U.unsafeInterleaveIO $ go (SizedPtr (halfSize + (size `mod` 2)) mid)
+        let recLeft = U.unsafeInterleaveIO $ go (SizedPtr halfSize start)
         let kMid = contpareIntervals k (getKeys peekMid)
+        -- putStrLn $ "kmid: " ++ show kMid
         case kMid of
           LT ->
             recLeft
@@ -145,16 +149,16 @@ binRangeQuery getKeys !k !szp = eval (go szp) where
           EQ ->
             let
               newLeft = if
-                kStart == EQ
+                kStart /= GT
               then
-                pure $ addIncrements start <$> [0..(halfSize - 1)]
+                pure $ addIncrements start <$> [0 .. halfSize - 1]
               else
                 recLeft
 
               newRight = if
-                kEnd == EQ
+                kEnd /= LT
               then
-                pure $ addIncrements start <$> [halfSize + 1..(size - 1)]
+                pure $ addIncrements start <$> [halfSize + 1 .. size - 1]
               else
                 recRight
 
@@ -294,12 +298,10 @@ applyEdits (PendingEdits edits) logPath = traverse_ (uncurry loadEdit) (Map.toLi
     -- gonna have to delete/shrink other intervals
     -- todo: make this less slow in the presence of multiple non-tail edits.
     loadEdit :: Day -> MetaStatus -> IO ()
-    loadEdit d UnknownM = error "fuck, I can't do that yet"
+    loadEdit _ UnknownM = error "I can't delete entries yet"
     loadEdit d OffM = consLog (Entry (singInterval d) N) logPath
     loadEdit d OnM = consLog (Entry (singInterval d) Y) logPath
 
--- File names should look like n-k.log if it's the nth digit from the right,
--- and the value at that digit is k.
 consLog :: Entry -> FilePath -> IO ()
 consLog e logPath = do
   logExists <- PF.fileExist logPath
@@ -338,7 +340,7 @@ consLog e logPath = do
               (Left . intercalate ",") <$> (traverse (fmap show . peek) ptrs)
           case res of
             Left els -> do
-              putStrLn $ "Input entry (" ++ show e ++ ") conflicts with other entries: " ++ els
+              putStrLn $ "Input entry (" ++ show e ++ ") conflicts with other entries: " ++ els ++ " and overwriting isn't implemented yet"
               PF.setFileSize logPath logSizeOff
             _ -> pure ()
     )
