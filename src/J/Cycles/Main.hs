@@ -390,8 +390,9 @@ handleEvent ::
 handleEvent vc vs (VtyEvent e) = handleVtyEvent (handleAppEvent vc) e vs
 handleEvent _ vs _ = continue vs
 
+-- just return "today" + `i`.
 adjustToday :: Integer -> IO Day
-adjustToday i = addDays i <$> (localDay <$> (utcToLocalTime <$> getCurrentTimeZone <*> getCurrentTime))
+adjustToday i = addDays i . localDay <$> (utcToLocalTime <$> getCurrentTimeZone <*> getCurrentTime)
 
 initialState ::
   ViewerConfig ->
