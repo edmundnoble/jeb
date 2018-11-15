@@ -336,34 +336,49 @@ handleVtyEvent ::
   EventM () (Next ViewerState)
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 'a') []) =
   handle (MoveCursorRight (-1))
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 'd') []) =
   handle (MoveCursorRight 1)
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 'a') [Vty.MCtrl]) =
   handle (MoveViewerRight (-1))
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 'd') [Vty.MCtrl]) =
   handle (MoveViewerRight 1)
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 'A') []) =
   handle (MoveViewerRight (-5))
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 'D') []) =
   handle (MoveViewerRight 5)
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 'w') []) =
   handle MoveUp
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 's') []) =
   handle MoveDown
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 'R') []) =
   handle ResetAll
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar ' ') []) =
   handle Refresh
+
 handleVtyEvent handle (Vty.EvKey Vty.KDel []) =
   handle Delete
+
 handleVtyEvent handle (Vty.EvKey Vty.KEnter []) =
   handle Toggle
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 's') [Vty.MCtrl]) =
   handle Save
+
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 'p') [Vty.MCtrl]) =
   handle Debug
+
 handleVtyEvent _ (Vty.EvKey Vty.KEsc []) =
   halt
+
 handleVtyEvent _ _ =
   continue
 
