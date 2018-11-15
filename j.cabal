@@ -22,7 +22,7 @@ executable j
                        , J.Logging
                        , J.Indexing.Main, J.Indexing.Types
                        , J.Indexing.Streengs
-                       , J.Cycles.Main, J.Cycles.Types
+                       , J.Cycles.Graphics, J.Cycles.Main, J.Cycles.Types
                        , J.Cycles.Streengs
   ghc-options:         -Wall -threaded +RTS -N -RTS
   build-depends:       base >=4.10 && <4.11

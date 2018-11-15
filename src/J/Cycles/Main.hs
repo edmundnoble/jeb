@@ -81,11 +81,11 @@ fitClip (Interval sl el) ([ds@(DatedStatus (Interval start end) st)]) =
     elLeft = DatedStatus (Interval sl start) UnknownM
     elRight = DatedStatus (Interval end el) UnknownM
   in
-  NonEmpty.fromList $ case (start > sl, end <= el) of
-    (True, True) -> [elLeft, ds, elRight]
-    (False, True) -> [DatedStatus (Interval sl end) st, elRight]
-    (True, False) -> [elLeft, DatedStatus (Interval start el) st]
-    (False, False) -> [DatedStatus (Interval sl el) st]
+    NonEmpty.fromList $ case (start > sl, end <= el) of
+      (True, True) -> [elLeft, ds, elRight]
+      (False, True) -> [DatedStatus (Interval sl end) st, elRight]
+      (True, False) -> [elLeft, DatedStatus (Interval start el) st]
+      (False, False) -> [DatedStatus (Interval sl el) st]
 
 fitClip (Interval sl el) (d@(DatedStatus (Interval start _) _):ds) =
   let
@@ -108,9 +108,9 @@ prepareRawEntries ::
   Either (NonEmpty InvalidStatus) (NonEmpty DatedStatus)
 prepareRawEntries ds entries =
   let
-    entryToDatedStatus (Streengs.Entry i rs) = DatedStatus i <$> (toMetaStatus <$> validateStatus rs)
+    entryToDatedStatus (Streengs.Entry i rs) = DatedStatus i . toMetaStatus <$> validateStatus rs
     sparseDatedStatuses = sequenceE (entryToDatedStatus <$> entries)
-    clippedDenseDatedStatuses = (fillInGaps . fitClip ds) <$> sparseDatedStatuses
+    clippedDenseDatedStatuses = fillInGaps . fitClip ds <$> sparseDatedStatuses
   in
     clippedDenseDatedStatuses
 
@@ -118,7 +118,7 @@ loadBetweenInterval :: Interval Day -> FilePath -> IO (Either LogParsingError (N
 loadBetweenInterval ds filePath =
   let
     rawEntries = Streengs.searchForDays ds filePath
-    datedStatuses = (first LogParsingError . prepareRawEntries ds) <$> rawEntries
+    datedStatuses = first LogParsingError . prepareRawEntries ds <$> rawEntries
   in
     datedStatuses
 
@@ -145,14 +145,14 @@ loadToState vc pvs = do
       ns -> do
         -- ~~ugh fuck this is ugly~~
         -- not anymore!
-        csv <- getCompose $ buildMapA (Compose . loadV) ns
+        csv <- getCompose $ buildMapA (Compose . loadValidation) ns
         return $ V.toEither $ fmap remakeViewerState csv
   where
     pcs = _partialCycleStates pvs
     ci = _partialInterval pvs
 
-    load :: String -> IO (Either LogParsingError CycleState)
-    load name =
+    loadEither :: String -> IO (Either LogParsingError CycleState)
+    loadEither name =
       let
         offset = maybe 0 _partialBoundOffset (Map.lookup name pcs)
         remakeCycleState = fmap (flip (CycleState offset) mempty)
@@ -162,8 +162,8 @@ loadToState vc pvs = do
     fixupError :: String -> LogParsingError -> NonEmpty LoadViewerStateError
     fixupError k v = (singletonNE . ErrorsParsingState . singletonNE) (k,v)
 
-    loadV :: String -> IO (V.Validation (NonEmpty LoadViewerStateError) CycleState)
-    loadV k = V.fromEither . first (fixupError k) <$> load k
+    loadValidation :: String -> IO (V.Validation (NonEmpty LoadViewerStateError) CycleState)
+    loadValidation k = V.fromEither . first (fixupError k) <$> loadEither k
 
     -- when the currently selected cycle disappears from the filesystem, which do we select next?
     -- the one before it if any are; otherwise, the one on the top, if it exists.
@@ -234,7 +234,7 @@ moveCursorRight n vc vs =
       pure $ setCursor vs
 
 dumpStateAndDie :: ViewerState -> String -> a
-dumpStateAndDie vs s = error (s ++ "\n" ++ show vs)
+dumpStateAndDie vs s = error (s ++ "\n\n" ++ show vs)
 
 alterCurrentStatus :: (MetaStatus -> MetaStatus) -> ViewerState -> ViewerState
 alterCurrentStatus alterStatus vs =
@@ -278,92 +278,101 @@ delCurrentStatus = alterCurrentStatus (const UnknownM)
 
 handleAppEvent ::
   ViewerConfig ->
-  ViewerState ->
   ViewerEvent ->
+  ViewerState ->
   EventM () (Next ViewerState)
-handleAppEvent vc vs (MoveViewerRight n) = do
-  newState <- liftIO (moveViewerRight n vc (forgetVS vs))
-  continue newState
-handleAppEvent vc vs (MoveCycleRight n) = do
-  newState <- liftIO (moveCycleRight n vc (forgetVS vs))
-  continue newState
-handleAppEvent vc vs (MoveCursorRight n) = do
-  newState <- liftIO (moveCursorRight n vc vs)
-  continue newState
-handleAppEvent vc vs Refresh = do
+
+handleAppEvent vc (MoveViewerRight n) vs =
+  liftIO (moveViewerRight n vc (forgetVS vs)) >>= continue
+
+handleAppEvent vc (MoveCycleRight n) vs =
+  liftIO (moveCycleRight n vc (forgetVS vs)) >>= continue
+
+handleAppEvent vc (MoveCursorRight n) vs =
+  liftIO (moveCursorRight n vc vs) >>= continue
+
+handleAppEvent vc Refresh vs = do
   -- note that this makes refresh a special case of moving, the identity move
-  Right newState <- liftIO (loadToState vc (forgetVS vs))
-  continue newState
-handleAppEvent _ vs MoveUp = do
+  let err e = dumpStateAndDie vs $ "refresh failed" ++ show e
+  continue =<<
+    either err pure =<<
+      liftIO (loadToState vc (forgetVS vs))
+
+handleAppEvent _ MoveUp vs = do
   let states = _cycleStates vs
   let newState = vs { _selectedCycle = case _selectedCycle vs of
     Nothing -> (fst . fst) <$> Map.minViewWithKey states
     (Just x) -> (Just . fromMaybe x) (fst <$> Map.lookupLT x states)
   }
   continue newState
-handleAppEvent _ vs@ViewerState { _selectedCycle = n } MoveDown = do
+
+handleAppEvent _ MoveDown vs@ViewerState { _selectedCycle = n } = do
   let states = _cycleStates vs
   let newState = vs { _selectedCycle = case n of
     Nothing -> (fst . fst) <$> Map.maxViewWithKey states
     Just x  -> (Just . fromMaybe x) (fst <$> Map.lookupGT x states)
   }
   continue newState
-handleAppEvent vc _ ResetAll = do
+
+handleAppEvent vc ResetAll _ = do
   Right newState <- liftIO $ initialState vc
   continue newState
-handleAppEvent _ vs Toggle = do
+
+handleAppEvent _ Toggle vs = do
   continue (togCurrentStatus vs)
-handleAppEvent _ vs Delete = do
+
+handleAppEvent _ Delete vs = do
   continue (delCurrentStatus vs)
-handleAppEvent _ vs Debug = do
-  liftIO $ print vs
-  continue vs
-handleAppEvent _ _ _ = error "unknown app event"
+
+handleAppEvent _ Debug vs = do
+  liftIO (print vs) *> continue vs
+
+handleAppEvent _ e _ = error $ "unknown app event: " ++ show e
 
 handleVtyEvent ::
-  (ViewerEvent -> EventM () (Next ViewerState)) ->
-  ViewerState ->
+  (ViewerEvent -> ViewerState -> EventM () (Next ViewerState)) ->
   Vty.Event ->
+  ViewerState ->
   EventM () (Next ViewerState)
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'a') []) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 'a') []) =
   handle (MoveCursorRight (-1))
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'd') []) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 'd') []) =
   handle (MoveCursorRight 1)
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'a') [Vty.MCtrl]) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 'a') [Vty.MCtrl]) =
   handle (MoveViewerRight (-1))
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'd') [Vty.MCtrl]) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 'd') [Vty.MCtrl]) =
   handle (MoveViewerRight 1)
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'A') []) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 'A') []) =
   handle (MoveViewerRight (-5))
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'D') []) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 'D') []) =
   handle (MoveViewerRight 5)
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'w') []) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 'w') []) =
   handle MoveUp
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 's') []) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 's') []) =
   handle MoveDown
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'R') []) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 'R') []) =
   handle ResetAll
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar ' ') []) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar ' ') []) =
   handle Refresh
-handleVtyEvent handle _ (Vty.EvKey Vty.KDel []) =
+handleVtyEvent handle (Vty.EvKey Vty.KDel []) =
   handle Delete
-handleVtyEvent handle _ (Vty.EvKey Vty.KEnter []) =
+handleVtyEvent handle (Vty.EvKey Vty.KEnter []) =
   handle Toggle
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 's') [Vty.MCtrl]) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 's') [Vty.MCtrl]) =
   handle Save
-handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'p') [Vty.MCtrl]) =
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 'p') [Vty.MCtrl]) =
   handle Debug
-handleVtyEvent _ vs (Vty.EvKey Vty.KEsc []) =
-  halt vs
-handleVtyEvent _ vs _ =
-  continue vs
+handleVtyEvent _ (Vty.EvKey Vty.KEsc []) =
+  halt
+handleVtyEvent _ _ =
+  continue
 
 handleEvent ::
   ViewerConfig ->
   ViewerState ->
   BrickEvent () ViewerEvent ->
   EventM () (Next ViewerState)
-handleEvent vc vs (VtyEvent e) = handleVtyEvent (handleAppEvent vc vs) vs e
+handleEvent vc vs (VtyEvent e) = handleVtyEvent (handleAppEvent vc) e vs
 handleEvent _ vs _ = continue vs
 
 adjustToday :: Integer -> IO Day

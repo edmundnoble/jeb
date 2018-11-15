@@ -71,7 +71,7 @@ data ViewerEvent
   | Toggle
   | Delete
   | Save
-  | Debug
+  | Debug deriving Show
 
 data DatedStatus = DatedStatus !(Interval Day) !MetaStatus deriving (Eq, Show)
 
