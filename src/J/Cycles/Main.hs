@@ -11,25 +11,22 @@ module J.Cycles.Main (brickMain) where
 
 import Brick.AttrMap
 import Brick.Main
-import Brick.Themes (Theme, loadCustomizations, newTheme, themeToAttrMap)
+import Brick.Themes (loadCustomizations, themeToAttrMap)
 import Brick.Types hiding (Max, Down)
-import Brick.Widgets.Center
-import Brick.Widgets.Core
-import Brick.Widgets.Border
-import Brick.Widgets.Border.Style
-import Brick.Util(clamp, fg, on)
+import Brick.Util(clamp)
 
 import Control.Applicative((<|>))
 import Control.Monad.IO.Class(liftIO)
-import Control.Monad.State
 import Data.Bifunctor(Bifunctor(..))
 import Data.Either(fromRight)
+import Data.Foldable(find, toList)
+import Data.Functor.Compose(Compose(..))
 import Data.Map.Strict(Map)
 import Data.Maybe(fromMaybe)
 import Data.List.NonEmpty(NonEmpty(..))
-import Data.Semigroup((<>), Max(..))
 import Data.Time(Day(..), addDays, diffDays, getCurrentTime, getCurrentTimeZone, localDay, utcToLocalTime)
 
+import J.Cycles.Graphics
 import J.Cycles.Types
 import qualified J.Cycles.Streengs as Streengs
 
@@ -39,21 +36,6 @@ import qualified Data.Validation as V
 import qualified Graphics.Vty as Vty
 import qualified System.Directory as D
 import qualified System.FilePath.Posix as FP
-
-fromListMaybe :: [a] -> Maybe (NonEmpty a)
-fromListMaybe [] = Nothing
-fromListMaybe (x:xs) = Just (x :| xs)
-
-pattern Nel :: forall a. NonEmpty a -> [a]
-pattern Nel nel <- (fromListMaybe -> Just nel)
-
-jBorder :: Widget n -> Widget n
-jBorder = withBorderStyle unicode . borderWithLabel (str "J!")
-
-validateStatus :: Streengs.RawStatus -> Either InvalidStatus Status
-validateStatus Streengs.Y = Right On
-validateStatus Streengs.N = Right Off
-validateStatus (Streengs.U c) = Left (InvalidStatus c)
 
 singletonNE :: a -> NonEmpty a
 singletonNE = flip (:|) []
@@ -75,8 +57,10 @@ sequenceE ne = bimap NonEmpty.reverse reverse $ go (Right []) ne where
     in
       go newAcc xs
 
-sequenceNE :: forall a e. NonEmpty (Either e a) -> Either (NonEmpty e) (NonEmpty a)
-sequenceNE = second (NonEmpty.fromList) . sequenceE . NonEmpty.toList
+validateStatus :: Streengs.RawStatus -> Either InvalidStatus Status
+validateStatus Streengs.Y = Right On
+validateStatus Streengs.N = Right Off
+validateStatus (Streengs.U c) = Left (InvalidStatus c)
 
 -- likely generalizable to any intervals
 fillInGaps :: NonEmpty DatedStatus -> NonEmpty DatedStatus
@@ -112,11 +96,11 @@ fitClip (Interval sl el) (d@(DatedStatus (Interval start _) _):ds) =
     clipL (DatedStatus (Interval s e) t) = flip DatedStatus t $ if s < sl then Interval sl e else Interval s e
     clipR (DatedStatus (Interval s e) t) = flip DatedStatus t $ if e > el then Interval s el else Interval s e
   in
-  NonEmpty.fromList $ case (start > sl, lend <= el) of
-    (True, True) ->   [elLeft,clipL d] ++ i ++ [clipR lds,elRight]
-    (False, True) ->  [clipL d] ++        i ++ [clipR lds,elRight]
-    (True, False) ->  [elLeft,clipL d] ++ i ++ [clipR lds]
-    (False, False) -> [clipL d] ++        i ++ [clipR lds]
+    NonEmpty.fromList $ case (start > sl, lend <= el) of
+      (True, True) ->   [elLeft,clipL d] ++ i ++ [clipR lds,elRight]
+      (False, True) ->  [clipL d] ++        i ++ [clipR lds,elRight]
+      (True, False) ->  [elLeft,clipL d] ++ i ++ [clipR lds]
+      (False, False) -> [clipL d] ++        i ++ [clipR lds]
 
 prepareRawEntries ::
   Interval Day ->
@@ -130,97 +114,6 @@ prepareRawEntries ds entries =
   in
     clippedDenseDatedStatuses
 
-defaultTheme :: Theme
-defaultTheme =
-  newTheme (Vty.brightWhite `on` Vty.black)
-           [ (attrName "cycleOn", fg Vty.green)
-           , (attrName "cycleOff", fg Vty.red)
-           , (attrName "cycleUnknown", fg Vty.white)
-           , (attrName "cycleSelectedOn", fg Vty.brightGreen)
-           , (attrName "cycleSelectedOff", fg Vty.brightRed)
-           , (attrName "cycleSelectedUnknown", fg Vty.brightWhite)
-           , (attrName "cursorOn", Vty.brightGreen `on` Vty.brightBlack)
-           , (attrName "cursorOff", Vty.brightRed `on` Vty.brightBlack)
-           , (attrName "cursorUnknown", Vty.brightWhite `on` Vty.brightBlack)
-           ]
-
-renderDay :: Int -> Int -> Bool -> String -> MetaStatus -> State Int (Widget CycleName)
-renderDay dayWidth offset selected name status =
-  let
-    -- this is NOT a hyphen, it's a line character
-    lineChar = '─'
-
-    offW = if offset == 0 then "" else (" (" ++ show offset ++ ")")
-  in
-    do
-      cur <- get
-      modify (\u -> u - 1)
-      let color = withAttr $ attrName $ if
-        cur == 0 && selected then
-            case status of
-              OnM ->      "cursorOn"
-              OffM ->     "cursorOff"
-              UnknownM -> "cursorUnknown"
-          else if selected then
-            case status of
-              OnM ->      "cycleSelectedOn"
-              OffM ->     "cycleSelectedOff"
-              UnknownM -> "cycleSelectedUnknown"
-          else
-            case status of
-              OnM ->      "cycleOn"
-              OffM ->     "cycleOff"
-              UnknownM -> "cycleUnknown"
-      let line = vLimit 1 $ color $ fill lineChar
-      return (hLimit dayWidth $ hBox [line, str (" " ++ name ++ offW ++ " "), line])
-
-renderCycleState :: Int -> Int -> String -> Bool -> CycleState -> Widget CycleName
-renderCycleState dayWidth cursor cycleName selected (CycleState { _cycleBoundOffset = offset, _cycleHistory = ch }) =
-  let
-    renderDatedStatus (DatedStatus i s) =
-      let
-        dayCount = diffDays (intervalEnd i) (intervalStart i)
-        renderSingleDay = renderDay dayWidth offset selected cycleName s
-        renderAll = hBox <$> (sequenceA $ replicate (fromIntegral dayCount) renderSingleDay)
-      in
-        renderAll
-    widgets = flip evalState cursor $ NonEmpty.toList <$> traverse renderDatedStatus ch
-  in
-    padBottom (Pad 1) (hBox widgets)
-
--- TODO: flesh this out so that longer cycle names are wrapped properly
-cycleViewerWidget :: Int -> Int -> CycleName -> [(String, CycleState)] -> Widget CycleName
-cycleViewerWidget dayWidth cursor (CycleName selected) (Nel ch) =
-  let
-    vp :: String -> Widget CycleName -> Widget CycleName
-    vp = flip viewport Horizontal . CycleName . Just
-
-    renderCH k = renderCycleState dayWidth cursor k (Just k == selected)
-  in
-    vBox $ fmap (uncurry renderCH) (NonEmpty.toList ch)
-
-cycleViewerWidget _ _ _ _ =
-  str "No entries in log!"
-
--- todo: display time deltas from today somewhere too
-drawTimeline :: Int -> Interval Day -> Widget a
-drawTimeline dayWidth (Interval start end) =
-  hBox (vLimit 3 . hLimit dayWidth . center . str . show <$> [start..(addDays (-1) end)])
-
-showViewerFromState :: ViewerState -> [Widget CycleName]
-showViewerFromState vs =
-  let
-    dayWidth = 18
-    bound = _interval vs
-    boundSize = fromIntegral $ intervalEnd bound `diffDays` intervalStart bound
-    selected = _selectedCycle vs
-    histories = Map.toList (_cycleStates vs)
-    cycleViewer = cycleViewerWidget dayWidth (_cursor vs) selected histories
-    timeline = drawTimeline dayWidth bound
-    decorate = padBottom (Pad 20) . padLeftRight 10 . center . jBorder . padTop (Pad 2)
-  in
-    [decorate (cycleViewer <=> timeline)]
-
 loadBetweenInterval :: Interval Day -> FilePath -> IO (Either LogParsingError (NonEmpty DatedStatus))
 loadBetweenInterval ds filePath =
   let
@@ -228,6 +121,12 @@ loadBetweenInterval ds filePath =
     datedStatuses = (first LogParsingError . prepareRawEntries ds) <$> rawEntries
   in
     datedStatuses
+
+-- does exactly what the type says ;)
+buildMapA :: (Traversable t, Applicative f, Ord k) => (k -> f a) -> t k -> f (Map k a)
+buildMapA f = fmap (Map.fromList . toList) . traverse tupleAndRun
+  where
+    tupleAndRun n = (,) n <$> (f n)
 
 -- always loads *all* at once
 loadToState ::
@@ -244,9 +143,10 @@ loadToState vc pvs = do
     case cycleNames of
       [] -> pure $ Left $ singletonNE LogFolderEmpty
       ns -> do
-        -- ugh fuck this is ugly
-        csv <- (fmap Map.fromList . sequenceA) <$> traverse (\n -> fmap (fmap ((,) n)) (loadV n)) ns
-        return $ V.toEither $ fmap replaceState csv
+        -- ~~ugh fuck this is ugly~~
+        -- not anymore!
+        csv <- getCompose $ buildMapA (Compose . loadV) ns
+        return $ V.toEither $ fmap remakeViewerState csv
   where
     pcs = _partialCycleStates pvs
     ci = _partialInterval pvs
@@ -255,8 +155,9 @@ loadToState vc pvs = do
     load name =
       let
         offset = maybe 0 _partialBoundOffset (Map.lookup name pcs)
+        remakeCycleState = fmap (flip (CycleState offset) mempty)
       in
-        fmap (flip (CycleState offset) mempty) <$> loadBetweenInterval (shiftIntervalRight offset ci) (_configLogPath vc FP.</> name)
+        remakeCycleState <$> loadBetweenInterval (shiftIntervalRight offset ci) (_configLogPath vc FP.</> name)
 
     fixupError :: String -> LogParsingError -> NonEmpty LoadViewerStateError
     fixupError k v = (singletonNE . ErrorsParsingState . singletonNE) (k,v)
@@ -264,20 +165,22 @@ loadToState vc pvs = do
     loadV :: String -> IO (V.Validation (NonEmpty LoadViewerStateError) CycleState)
     loadV k = V.fromEither . first (fixupError k) <$> load k
 
-    findNewCurrentCycle :: Map String CycleState -> CycleName
+    -- when the currently selected cycle disappears from the filesystem, which do we select next?
+    -- the one before it if any are; otherwise, the one on the top, if it exists.
+    findNewCurrentCycle :: Map String CycleState -> Maybe String
     findNewCurrentCycle cs =
       case _partialSelectedCycle pvs of
-        CycleName (Just n) ->
+        Just n ->
           let
             le = Map.lookupLE n cs
-          in CycleName $ (fst <$> le) <|> defaultName
-        CycleName Nothing ->
-          CycleName defaultName
+          in (fst <$> le) <|> defaultName
+        Nothing ->
+          defaultName
       where
         defaultName = fmap (fst . fst) $ Map.minViewWithKey cs
 
-    replaceState :: Map String CycleState -> ViewerState
-    replaceState cs = ViewerState {
+    remakeViewerState :: Map String CycleState -> ViewerState
+    remakeViewerState cs = ViewerState {
       _selectedCycle = findNewCurrentCycle cs
     , _interval = _partialInterval pvs
     , _cursor = _partialCursor pvs
@@ -306,8 +209,8 @@ moveCycleRight n vc pvs =
     moveState st = st { _partialBoundOffset = _partialBoundOffset st + fromIntegral n }
 
     updatedCycleStates = case cc of
-      CycleName Nothing -> pcs
-      CycleName (Just curName) -> Map.update (Just . moveState) curName pcs
+      Nothing -> pcs
+      Just curName -> Map.update (Just . moveState) curName pcs
 
     newViewerState =
       loadToState vc pvs { _partialCycleStates = updatedCycleStates }
@@ -330,24 +233,54 @@ moveCursorRight n vc vs =
     else
       pure $ setCursor vs
 
-toggleEdit :: Day -> PendingEdits -> PendingEdits
-toggleEdit d (PendingEdits pe) = undefined
+dumpStateAndDie :: ViewerState -> String -> a
+dumpStateAndDie vs s = error (s ++ "\n" ++ show vs)
 
-toggle :: ViewerState -> ViewerState
-toggle vs =
+alterCurrentStatus :: (MetaStatus -> MetaStatus) -> ViewerState -> ViewerState
+alterCurrentStatus alterStatus vs =
   let
-    CycleName cc = _selectedCycle vs
-    modState cycleState =
-      cycleState { _cyclePendingEdits = _cyclePendingEdits cycleState }
-    cs = cc >>= flip Map.lookup (_cycleStates vs)
+    cyclesMissing = dumpStateAndDie vs "Missing cycles being toggled"
+
+    dayAtCursor = addDays (fromIntegral $ _cursor vs) (intervalStart $ _interval vs)
+
+    newVs = do
+      cc <- _selectedCycle vs
+      let newCycleStates = Map.adjust newCycleState cc (_cycleStates vs)
+      Just (vs { _cycleStates = newCycleStates })
+
+    newCycleState cycleState =
+      let
+        cycleStatus = fromMaybe cyclesMissing $ datedStatus <$>
+          find (flip intervalContains dayAtCursor . statusDates) (_cycleHistory cycleState)
+        PendingEdits pendingEdits = _cyclePendingEdits cycleState
+        alterEditStatus editStatus =
+          let
+            newStatus = alterStatus (fromMaybe cycleStatus editStatus)
+            -- we don't want it to show up as an edit if it's the same as on-disk
+            redundant = newStatus == cycleStatus
+          in
+            if redundant then Nothing else Just newStatus
+      in
+        cycleState {
+          _cyclePendingEdits = PendingEdits $ Map.alter alterEditStatus dayAtCursor pendingEdits
+        }
   in
-    undefined
+    fromMaybe (dumpStateAndDie vs "Missing cycles being altered") newVs
+
+togCurrentStatus :: ViewerState -> ViewerState
+togCurrentStatus = alterCurrentStatus tog where
+  tog OffM = OnM
+  tog OnM = OffM
+  tog UnknownM = OnM
+
+delCurrentStatus :: ViewerState -> ViewerState
+delCurrentStatus = alterCurrentStatus (const UnknownM)
 
 handleAppEvent ::
   ViewerConfig ->
   ViewerState ->
   ViewerEvent ->
-  EventM CycleName (Next ViewerState)
+  EventM () (Next ViewerState)
 handleAppEvent vc vs (MoveViewerRight n) = do
   newState <- liftIO (moveViewerRight n vc (forgetVS vs))
   continue newState
@@ -364,29 +297,34 @@ handleAppEvent vc vs Refresh = do
 handleAppEvent _ vs MoveUp = do
   let states = _cycleStates vs
   let newState = vs { _selectedCycle = case _selectedCycle vs of
-    CycleName Nothing -> CycleName $ (fst . fst) <$> Map.minViewWithKey states
-    CycleName (Just x) -> (CycleName . Just . fromMaybe x) (fst <$> Map.lookupLT x states)
+    Nothing -> (fst . fst) <$> Map.minViewWithKey states
+    (Just x) -> (Just . fromMaybe x) (fst <$> Map.lookupLT x states)
   }
   continue newState
-handleAppEvent _ vs@ViewerState { _selectedCycle = CycleName n } MoveDown = do
+handleAppEvent _ vs@ViewerState { _selectedCycle = n } MoveDown = do
   let states = _cycleStates vs
   let newState = vs { _selectedCycle = case n of
-    Nothing -> CycleName $ (fst . fst) <$> Map.maxViewWithKey states
-    Just x  -> (CycleName . Just . fromMaybe x) (fst <$> Map.lookupGT x states)
+    Nothing -> (fst . fst) <$> Map.maxViewWithKey states
+    Just x  -> (Just . fromMaybe x) (fst <$> Map.lookupGT x states)
   }
   continue newState
 handleAppEvent vc _ ResetAll = do
   Right newState <- liftIO $ initialState vc
   continue newState
 handleAppEvent _ vs Toggle = do
-  continue (toggle vs)
+  continue (togCurrentStatus vs)
+handleAppEvent _ vs Delete = do
+  continue (delCurrentStatus vs)
+handleAppEvent _ vs Debug = do
+  liftIO $ print vs
+  continue vs
 handleAppEvent _ _ _ = error "unknown app event"
 
 handleVtyEvent ::
-  (ViewerEvent -> EventM CycleName (Next ViewerState)) ->
+  (ViewerEvent -> EventM () (Next ViewerState)) ->
   ViewerState ->
   Vty.Event ->
-  EventM CycleName (Next ViewerState)
+  EventM () (Next ViewerState)
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'a') []) =
   handle (MoveCursorRight (-1))
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'd') []) =
@@ -413,6 +351,8 @@ handleVtyEvent handle _ (Vty.EvKey Vty.KEnter []) =
   handle Toggle
 handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 's') [Vty.MCtrl]) =
   handle Save
+handleVtyEvent handle _ (Vty.EvKey (Vty.KChar 'p') [Vty.MCtrl]) =
+  handle Debug
 handleVtyEvent _ vs (Vty.EvKey Vty.KEsc []) =
   halt vs
 handleVtyEvent _ vs _ =
@@ -421,8 +361,8 @@ handleVtyEvent _ vs _ =
 handleEvent ::
   ViewerConfig ->
   ViewerState ->
-  BrickEvent CycleName ViewerEvent ->
-  EventM CycleName (Next ViewerState)
+  BrickEvent () ViewerEvent ->
+  EventM () (Next ViewerState)
 handleEvent vc vs (VtyEvent e) = handleVtyEvent (handleAppEvent vc vs) vs e
 handleEvent _ vs _ = continue vs
 
@@ -438,7 +378,7 @@ initialState vc = do
   let ds = Interval left right
   loadToState vc (freshPVS ds)
 
-app :: AttrMap -> ViewerConfig -> App ViewerState ViewerEvent CycleName
+app :: AttrMap -> ViewerConfig -> App ViewerState ViewerEvent ()
 app mapping vc =
   App {
     appDraw = showViewerFromState

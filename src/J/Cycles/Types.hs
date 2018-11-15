@@ -5,9 +5,8 @@
 
 module J.Cycles.Types(
   Status(..), MetaStatus(..), toMetaStatus, fromMetaStatus
-, Interval(..), intervalStart, intervalEnd
-, DatedStatus(..)
-, CycleName(..)
+, Interval(..), intervalContains, intervalStart, intervalEnd
+, DatedStatus(..), datedStatus, statusDates
 , PendingEdits(..)
 , CycleHistory(..), CycleState(..), PartialCycleState(..), PartialViewerState(..)
 , forgetCS, forgetVS, freshPVS
@@ -40,7 +39,7 @@ fromMetaStatus OnM = Just On
 fromMetaStatus OffM = Just Off
 fromMetaStatus UnknownM = Nothing
 
-data Interval a = Interval a a deriving (Eq, Show)
+data Interval a = Interval !a !a deriving (Eq, Show)
 
 instance Pretty a => Pretty (Interval a) where
   pretty (Interval s e) = pretty s <> text " -> " <> pretty e
@@ -53,14 +52,18 @@ intervalStart (Interval a _) = a
 intervalEnd :: Interval a -> a
 intervalEnd (Interval _ a) = a
 
+{-# inline intervalContains #-}
+intervalContains :: Ord a => Interval a -> a -> Bool
+intervalContains (Interval s e) a = s <= a && a <= e
+
 data ViewerEvent
-  = HideCycle String
-  | ShowCycle String
-  | ShowOnlyCycle String
+  = HideCycle !String
+  | ShowCycle !String
+  | ShowOnlyCycle !String
   | ShowAllCycles
-  | MoveViewerRight Int
-  | MoveCursorRight Int
-  | MoveCycleRight Int
+  | MoveViewerRight !Int
+  | MoveCursorRight !Int
+  | MoveCycleRight !Int
   | MoveUp
   | MoveDown
   | Refresh
@@ -68,22 +71,28 @@ data ViewerEvent
   | Toggle
   | Delete
   | Save
+  | Debug
 
-newtype CycleName = CycleName (Maybe String) deriving (Eq, Ord, Show)
+data DatedStatus = DatedStatus !(Interval Day) !MetaStatus deriving (Eq, Show)
 
-data DatedStatus = DatedStatus (Interval Day) MetaStatus deriving (Eq, Show)
+{-# inline statusDates #-}
+statusDates :: DatedStatus -> Interval Day
+statusDates (DatedStatus i _) = i
+
+datedStatus :: DatedStatus -> MetaStatus
+datedStatus (DatedStatus _ s) = s
 
 data CycleHistory = CycleHistory {
-  _historyName :: String
-, _historyTransitions :: NonEmpty DatedStatus
+  _historyName :: !String
+, _historyTransitions :: !(NonEmpty DatedStatus)
 } deriving (Eq, Show)
 
 data ViewerConfig = ViewerConfig {
-  _configLogPath :: FilePath
-, _configIntervalSize :: Int
+  _configLogPath :: !FilePath
+, _configIntervalSize :: !Int
 } deriving Show
 
-newtype PendingEdits = PendingEdits (Map Day MetaStatus)
+newtype PendingEdits = PendingEdits { _getPendingEdits :: Map Day MetaStatus }
   deriving Show
 
 instance Monoid (PendingEdits) where
@@ -91,28 +100,28 @@ instance Monoid (PendingEdits) where
   mempty = PendingEdits Map.empty
 
 data CycleState = CycleState {
-  _cycleBoundOffset :: Int
-, _cycleHistory :: NonEmpty DatedStatus
-, _cyclePendingEdits :: PendingEdits
+  _cycleBoundOffset :: !Int
+, _cycleHistory :: !(NonEmpty DatedStatus)
+, _cyclePendingEdits :: !PendingEdits
 } deriving Show
 
 data PartialCycleState = PartialCycleState {
-  _partialBoundOffset :: Int
-, _partialPendingEdits :: PendingEdits
+  _partialBoundOffset :: !Int
+, _partialPendingEdits :: !PendingEdits
 } deriving Show
 
 data ViewerState = ViewerState {
-  _cursor :: Int
-, _cycleStates :: Map String CycleState
-, _interval :: Interval Day
-, _selectedCycle :: CycleName
+  _cursor :: !Int
+, _cycleStates :: !(Map String CycleState)
+, _interval :: !(Interval Day)
+, _selectedCycle :: !(Maybe String)
 } deriving Show
 
 data PartialViewerState = PartialViewerState {
-  _partialCursor :: Int
-, _partialCycleStates :: Map String PartialCycleState
-, _partialInterval :: Interval Day
-, _partialSelectedCycle :: CycleName
+  _partialCursor :: !Int
+, _partialCycleStates :: !(Map String PartialCycleState)
+, _partialInterval :: !(Interval Day)
+, _partialSelectedCycle :: !(Maybe String)
 } deriving Show
 
 forgetCS :: CycleState -> PartialCycleState
@@ -131,17 +140,17 @@ freshPVS :: Interval Day -> PartialViewerState
 freshPVS ds = PartialViewerState {
   _partialCursor = 0
 , _partialCycleStates = Map.empty
-, _partialSelectedCycle = CycleName Nothing
+, _partialSelectedCycle = Nothing
 , _partialInterval = ds
 }
 
 newtype InvalidStatus = InvalidStatus Char deriving (Eq, Show)
 
 data LogParsingError
-  = LogParsingError (NonEmpty InvalidStatus)
+  = LogParsingError !(NonEmpty InvalidStatus)
   | LogEmpty deriving Show
 
 data LoadViewerStateError
-  = ErrorsParsingState (NonEmpty (String, LogParsingError))
+  = ErrorsParsingState !(NonEmpty (String, LogParsingError))
   | LogFolderEmpty
   | LogFolderMissing deriving Show

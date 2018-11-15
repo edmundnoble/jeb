@@ -30,8 +30,8 @@ import J.Cycles.Types
 type TimeSpan = Interval Day
 
 data Entry = Entry {
-  _entryToInterval :: TimeSpan
-, _entryRawStatus :: RawStatus
+  _entryToInterval :: !TimeSpan
+, _entryRawStatus :: !RawStatus
 } deriving (Eq, Show)
 
 data RawStatus = Y | N | U !Char deriving (Eq, Show)

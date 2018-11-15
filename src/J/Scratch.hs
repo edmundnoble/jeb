@@ -51,6 +51,8 @@ cycleLogPath = "logs"
 
 vc = ViewerConfig cycleLogPath 12
 
+bm = brickMain vc
+
 -- today = unsafePerformIO $ adjustToday 0
 
 d = read "2001-01-01"
