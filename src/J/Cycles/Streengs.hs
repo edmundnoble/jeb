@@ -292,6 +292,7 @@ applyEdits (PendingEdits edits) logPath = traverse_ (uncurry loadEdit) (Map.toLi
     -- How the FUCK do I insert unknown? Do I have to store unknown?
     -- wouldn't solve anything, we still won't be populated for unknown times anyway
     -- gonna have to delete/shrink other intervals
+    -- todo: make this less slow in the presence of multiple non-tail edits.
     loadEdit :: Day -> MetaStatus -> IO ()
     loadEdit d UnknownM = error "fuck, I can't do that yet"
     loadEdit d OffM = consLog (Entry (singInterval d) N) logPath
