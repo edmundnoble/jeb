@@ -233,13 +233,16 @@ moveCursorRight n vc vs =
     else
       pure $ setCursor vs
 
-dumpStateAndDie :: ViewerState -> String -> a
-dumpStateAndDie vs s = error (s ++ "\n\n" ++ show vs)
+dumpAndDie :: ViewerState -> String -> a
+dumpAndDie vs s = error (s ++ "\n\nState: \n" ++ show vs)
+
+dumpAndDieC :: ViewerConfig -> ViewerState -> String -> a
+dumpAndDieC vc vs s = error (s ++ "\n\nConfig: \n" ++ show vc ++ "\n\nState: \n" ++ show vs)
 
 alterCurrentStatus :: (MetaStatus -> MetaStatus) -> ViewerState -> ViewerState
 alterCurrentStatus alterStatus vs =
   let
-    cyclesMissing = dumpStateAndDie vs "Missing cycles being toggled"
+    cyclesMissing = dumpAndDie vs "Missing cycles being altered"
 
     dayAtCursor = addDays (fromIntegral $ _cursor vs) (intervalStart $ _interval vs)
 
@@ -265,7 +268,7 @@ alterCurrentStatus alterStatus vs =
           _cyclePendingEdits = PendingEdits $ Map.alter alterEditStatus dayAtCursor pendingEdits
         }
   in
-    fromMaybe (dumpStateAndDie vs "Missing cycles being altered") newVs
+    fromMaybe cyclesMissing newVs
 
 togCurrentStatus :: ViewerState -> ViewerState
 togCurrentStatus = alterCurrentStatus tog where
@@ -293,16 +296,15 @@ handleAppEvent vc (MoveCursorRight n) vs =
 
 handleAppEvent vc Refresh vs = do
   -- note that this makes refresh a special case of moving, the identity move
-  let err e = dumpStateAndDie vs $ "refresh failed" ++ show e
-  continue =<<
-    either err pure =<<
-      liftIO (loadToState vc (forgetVS vs))
+  let err e = dumpAndDieC vc vs $ "refresh failed: " ++ show e
+  newStateOrErr <- liftIO $ loadToState vc (forgetVS vs)
+  continue =<< either err pure newStateOrErr
 
 handleAppEvent _ MoveUp vs = do
   let states = _cycleStates vs
   let newState = vs { _selectedCycle = case _selectedCycle vs of
     Nothing -> (fst . fst) <$> Map.minViewWithKey states
-    (Just x) -> (Just . fromMaybe x) (fst <$> Map.lookupLT x states)
+    Just x -> (Just . fromMaybe x) (fst <$> Map.lookupLT x states)
   }
   continue newState
 
@@ -314,9 +316,10 @@ handleAppEvent _ MoveDown vs@ViewerState { _selectedCycle = n } = do
   }
   continue newState
 
-handleAppEvent vc ResetAll _ = do
-  Right newState <- liftIO $ initialState vc
-  continue newState
+handleAppEvent vc ResetAll vs = do
+  let err e = dumpAndDieC vc vs $ "resetting all failed: " ++ show e
+  newStateOrErr <- liftIO $ initialState vc
+  continue =<< either err pure newStateOrErr
 
 handleAppEvent _ Toggle vs = do
   continue (togCurrentStatus vs)
@@ -327,7 +330,7 @@ handleAppEvent _ Delete vs = do
 handleAppEvent _ Debug vs = do
   liftIO (print vs) *> continue vs
 
-handleAppEvent _ e _ = error $ "unknown app event: " ++ show e
+handleAppEvent vc e vs = dumpAndDieC vc vs $ "unknown app event: " ++ show e
 
 handleVtyEvent ::
   (ViewerEvent -> ViewerState -> EventM () (Next ViewerState)) ->
