@@ -2,6 +2,7 @@
 {-# language ExplicitForAll #-}
 {-# language FlexibleContexts #-}
 {-# language LambdaCase #-}
+{-# language NamedFieldPuns #-}
 {-# language NoMonomorphismRestriction #-}
 {-# language PatternSynonyms #-}
 {-# language TupleSections #-}
@@ -22,6 +23,8 @@ import Control.Monad.State
 import Data.List.NonEmpty(NonEmpty(..))
 import Data.Time(Day(..), addDays, diffDays)
 
+import Debug.Trace
+
 import J.Cycles.Types
 
 import qualified Data.List.NonEmpty as NonEmpty
@@ -32,7 +35,7 @@ fromListMaybe :: [a] -> Maybe (NonEmpty a)
 fromListMaybe [] = Nothing
 fromListMaybe (x:xs) = Just (x :| xs)
 
-pattern Nel :: forall a. NonEmpty a -> [a]
+pattern Nel :: NonEmpty a -> [a]
 pattern Nel nel <- (fromListMaybe -> Just nel)
 
 jBorder :: Widget n -> Widget n
@@ -52,8 +55,8 @@ defaultTheme =
            , (attrName "cursorUnknown", Vty.brightWhite `on` Vty.brightBlack)
            ]
 
-renderDay :: Int -> Int -> Bool -> String -> MetaStatus -> State Int (Widget ())
-renderDay dayWidth offset selected name status =
+renderDay :: Int -> Int -> Bool -> String -> MetaStatus -> Maybe MetaStatus -> State Int (Widget ())
+renderDay dayWidth offset selected name status editStatus =
   let
     -- this is NOT a hyphen, it's a line character
     lineChar = '─'
@@ -63,36 +66,39 @@ renderDay dayWidth offset selected name status =
     do
       cur <- get
       modify (\u -> u - 1)
-      let color = withAttr $ attrName $ if
+      let color st = withAttr $ attrName $ if
         cur == 0 && selected then
-            case status of
+            case st of
               OnM ->      "cursorOn"
               OffM ->     "cursorOff"
               UnknownM -> "cursorUnknown"
           else if selected then
-            case status of
+            case st of
               OnM ->      "cycleSelectedOn"
               OffM ->     "cycleSelectedOff"
               UnknownM -> "cycleSelectedUnknown"
           else
-            case status of
+            case st of
               OnM ->      "cycleOn"
               OffM ->     "cycleOff"
               UnknownM -> "cycleUnknown"
-      let line = vLimit 1 $ color $ fill lineChar
+      let uneditedLine = vLimit 1 $ color status $ fill lineChar
+      let editedLine es = vLimit 1 $ (color status (str [lineChar]) <+> color es (fill lineChar) <+> color status (str [lineChar]))
+      let line = maybe uneditedLine editedLine editStatus
       return (hLimit dayWidth $ hBox [line, str (" " ++ name ++ offW ++ " "), line])
 
 renderCycleState :: Int -> Int -> String -> Bool -> CycleState -> Widget ()
-renderCycleState dayWidth cursor cycleName selected (CycleState { _cycleBoundOffset = offset, _cycleHistory = ch }) =
+renderCycleState dayWidth cursor cycleName selected (CycleState { _cycleBoundOffset, _cycleHistory, _cyclePendingEdits }) =
   let
     renderDatedStatus (DatedStatus i s) =
       let
         dayCount = diffDays (intervalEnd i) (intervalStart i)
-        renderSingleDay = renderDay dayWidth offset selected cycleName s
-        renderAll = hBox <$> (sequenceA $ replicate (fromIntegral dayCount) renderSingleDay)
+        renderSingleDay = renderDay dayWidth _cycleBoundOffset selected cycleName s
+        daysByEdit = renderSingleDay . flip Map.lookup (_getPendingEdits _cyclePendingEdits) <$> [intervalStart i .. intervalEnd i]
+        renderAll = hBox <$> sequenceA daysByEdit
       in
         renderAll
-    widgets = flip evalState cursor $ NonEmpty.toList <$> traverse renderDatedStatus ch
+    widgets = flip evalState cursor $ NonEmpty.toList <$> traverse renderDatedStatus _cycleHistory
   in
     padBottom (Pad 1) (hBox widgets)
 
@@ -121,6 +127,6 @@ showViewerFromState vs =
     histories = Map.toList (_cycleStates vs)
     cycleViewer = cycleViewerWidget dayWidth (_cursor vs) selected histories
     timeline = drawTimeline dayWidth bound
-    decorate = padBottom (Pad 20) . padLeftRight 10 . center . jBorder . padTop (Pad 2)
+    decorate = padBottom (Pad 15) . padLeftRight 10 . center . jBorder . padTop (Pad 2)
   in
     [decorate (cycleViewer <=> timeline)]
