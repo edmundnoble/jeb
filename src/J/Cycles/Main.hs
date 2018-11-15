@@ -154,8 +154,10 @@ loadToState vc pvs = do
     loadEither :: String -> IO (Either LogParsingError CycleState)
     loadEither name =
       let
-        offset = maybe 0 _partialBoundOffset (Map.lookup name pcs)
-        remakeCycleState = fmap (flip (CycleState offset) mempty)
+        existing = Map.lookup name pcs
+        offset = maybe 0 _partialBoundOffset existing
+        pendingEdits = maybe mempty _partialPendingEdits existing
+        remakeCycleState = fmap (flip (CycleState offset) pendingEdits)
       in
         remakeCycleState <$> loadBetweenInterval (shiftIntervalRight offset ci) (_configLogPath vc FP.</> name)
 
@@ -173,7 +175,8 @@ loadToState vc pvs = do
         Just n ->
           let
             le = Map.lookupLE n cs
-          in (fst <$> le) <|> defaultName
+          in
+            (fst <$> le) <|> defaultName
         Nothing ->
           defaultName
       where
@@ -234,12 +237,12 @@ moveCursorRight n vc vs =
       pure $ setCursor vs
 
 dumpAndDie :: ViewerState -> String -> a
-dumpAndDie vs s = error (s ++ "\n\nState: \n" ++ show vs)
+dumpAndDie vs s = error (s ++ "\n\nState: \n" ++ printViewerState vs)
 
 dumpAndDieC :: ViewerConfig -> ViewerState -> String -> a
-dumpAndDieC vc vs s = error (s ++ "\n\nConfig: \n" ++ show vc ++ "\n\nState: \n" ++ show vs)
+dumpAndDieC vc vs s = error (s ++ "\n\nConfig: \n" ++ printViewerConfig vc ++ "\n\nState: \n" ++ printViewerState vs)
 
-alterCurrentStatus :: (MetaStatus -> MetaStatus) -> ViewerState -> ViewerState
+alterCurrentStatus :: (MetaStatus -> Maybe MetaStatus -> MetaStatus) -> ViewerState -> ViewerState
 alterCurrentStatus alterStatus vs =
   let
     cyclesMissing = dumpAndDie vs "Missing cycles being altered"
@@ -258,7 +261,7 @@ alterCurrentStatus alterStatus vs =
         PendingEdits pendingEdits = _cyclePendingEdits cycleState
         alterEditStatus editStatus =
           let
-            newStatus = alterStatus (fromMaybe cycleStatus editStatus)
+            newStatus = alterStatus cycleStatus editStatus
             -- we don't want it to show up as an edit if it's the same as on-disk
             redundant = newStatus == cycleStatus
           in
@@ -271,13 +274,16 @@ alterCurrentStatus alterStatus vs =
     fromMaybe cyclesMissing newVs
 
 togCurrentStatus :: ViewerState -> ViewerState
-togCurrentStatus = alterCurrentStatus tog where
+togCurrentStatus = alterCurrentStatus (\s e -> tog $ fromMaybe s e) where
   tog OffM = OnM
   tog OnM = OffM
   tog UnknownM = OnM
 
 delCurrentStatus :: ViewerState -> ViewerState
-delCurrentStatus = alterCurrentStatus (const UnknownM)
+delCurrentStatus = alterCurrentStatus (const $ const UnknownM)
+
+resetCell :: ViewerState -> ViewerState
+resetCell = alterCurrentStatus (const . id)
 
 handleAppEvent ::
   ViewerConfig ->
@@ -321,6 +327,9 @@ handleAppEvent vc ResetAll vs = do
   newStateOrErr <- liftIO $ initialState vc
   continue =<< either err pure newStateOrErr
 
+handleAppEvent _ ResetCell vs = do
+  continue (resetCell vs)
+
 handleAppEvent _ Toggle vs = do
   continue (togCurrentStatus vs)
 
@@ -328,7 +337,7 @@ handleAppEvent _ Delete vs = do
   continue (delCurrentStatus vs)
 
 handleAppEvent _ Debug vs = do
-  liftIO (print vs) *> continue vs
+  liftIO (putStrLn $ printViewerState vs) *> continue vs
 
 handleAppEvent vc e vs = dumpAndDieC vc vs $ "unknown app event: " ++ show e
 
@@ -360,6 +369,9 @@ handleVtyEvent handle (Vty.EvKey (Vty.KChar 'w') []) =
 
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 's') []) =
   handle MoveDown
+
+handleVtyEvent handle (Vty.EvKey (Vty.KChar 'r') []) =
+  handle ResetCell
 
 handleVtyEvent handle (Vty.EvKey (Vty.KChar 'R') []) =
   handle ResetAll

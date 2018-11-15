@@ -8,13 +8,14 @@ module J.Cycles.Types(
 , Interval(..), intervalContains, intervalStart, intervalEnd
 , DatedStatus(..), datedStatus, statusDates
 , PendingEdits(..)
-, CycleHistory(..), CycleState(..), PartialCycleState(..), PartialViewerState(..)
+, CycleHistory(..), CycleState(..), PartialCycleState(..), PartialViewerState(..), printCycleState
 , forgetCS, forgetVS, freshPVS
-, ViewerConfig(..), ViewerEvent(..), ViewerState(..)
+, ViewerConfig(..), ViewerEvent(..), ViewerState(..), printViewerConfig, printViewerState
 , InvalidStatus(..), LogParsingError(..), LoadViewerStateError(..)
 ) where
 
 import Control.DeepSeq(NFData)
+import Data.List(intercalate)
 import Data.List.NonEmpty(NonEmpty)
 import Data.Map.Strict(Map)
 import Data.Time.Calendar(Day)
@@ -68,6 +69,7 @@ data ViewerEvent
   | MoveDown
   | Refresh
   | ResetAll
+  | ResetCell
   | Toggle
   | Delete
   | Save
@@ -92,6 +94,14 @@ data ViewerConfig = ViewerConfig {
 , _configIntervalSize :: !Int
 } deriving Show
 
+printViewerConfig :: ViewerConfig -> String
+printViewerConfig ViewerConfig {
+  _configLogPath,
+  _configIntervalSize
+} =
+  "Config log path: " ++ _configLogPath ++
+  "\nConfig interval size: " ++ show _configIntervalSize
+
 newtype PendingEdits = PendingEdits { _getPendingEdits :: Map Day MetaStatus }
   deriving Show
 
@@ -103,7 +113,32 @@ data CycleState = CycleState {
   _cycleBoundOffset :: !Int
 , _cycleHistory :: !(NonEmpty DatedStatus)
 , _cyclePendingEdits :: !PendingEdits
+-- todo: remove Show instance
 } deriving Show
+
+printViewerState :: ViewerState -> String
+printViewerState ViewerState {
+  _cursor,
+  _cycleStates,
+  _interval,
+  _selectedCycle
+} =
+  "Cursor offset: " ++ show _cursor ++
+  "\nCycle states: " ++ (printCycleStates _cycleStates) ++
+  "\nInterval: " ++ show _interval ++
+  "\nSelected cycle: " ++ show _selectedCycle
+
+printCycleStates :: Map String CycleState -> String
+printCycleStates = show
+
+printCycleState :: CycleState -> String
+printCycleState CycleState { _cycleBoundOffset, _cycleHistory, _cyclePendingEdits }  =
+  "  Cycle offset: " ++ show _cycleBoundOffset ++
+  "\n  Cycle history: " ++ printCycleHistory _cycleHistory ++
+  "\n  Cycle pending edits: " ++ printPendingEdits _cyclePendingEdits
+    where
+      printCycleHistory = show
+      printPendingEdits = show
 
 data PartialCycleState = PartialCycleState {
   _partialBoundOffset :: !Int
@@ -115,7 +150,7 @@ data ViewerState = ViewerState {
 , _cycleStates :: !(Map String CycleState)
 , _interval :: !(Interval Day)
 , _selectedCycle :: !(Maybe String)
-} deriving Show
+}
 
 data PartialViewerState = PartialViewerState {
   _partialCursor :: !Int

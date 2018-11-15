@@ -94,7 +94,7 @@ renderCycleState dayWidth cursor cycleName selected (CycleState { _cycleBoundOff
       let
         dayCount = diffDays (intervalEnd i) (intervalStart i)
         renderSingleDay = renderDay dayWidth _cycleBoundOffset selected cycleName s
-        daysByEdit = renderSingleDay . flip Map.lookup (_getPendingEdits _cyclePendingEdits) <$> [intervalStart i .. intervalEnd i]
+        daysByEdit = renderSingleDay . flip Map.lookup (_getPendingEdits _cyclePendingEdits) <$> [intervalStart i .. (pred $ intervalEnd i)]
         renderAll = hBox <$> sequenceA daysByEdit
       in
         renderAll
