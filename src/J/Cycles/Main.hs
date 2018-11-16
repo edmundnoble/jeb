@@ -59,10 +59,10 @@ sequenceE ne = bimap NonEmpty.reverse reverse $ go (Right []) ne where
     in
       go newAcc xs
 
-validateStatus :: Streengs.RawStatus -> Either InvalidStatus Status
-validateStatus Streengs.Y = Right On
-validateStatus Streengs.N = Right Off
-validateStatus (Streengs.U c) = Left (InvalidStatus c)
+validateStatus :: RawStatus -> Either InvalidStatus Status
+validateStatus Y = Right On
+validateStatus N = Right Off
+validateStatus (U c) = Left (InvalidStatus c)
 
 -- likely generalizable to any intervals
 fillInGaps :: NonEmpty DatedStatus -> NonEmpty DatedStatus
@@ -106,11 +106,11 @@ fitClip (Interval sl el) (d@(DatedStatus (Interval start _) _):ds) =
 
 prepareRawEntries ::
   Interval Day ->
-  [Streengs.Entry] ->
+  [RawEntry] ->
   Either (NonEmpty InvalidStatus) (NonEmpty DatedStatus)
 prepareRawEntries ds entries =
   let
-    entryToDatedStatus (Streengs.Entry i rs) = DatedStatus i . toMetaStatus <$> validateStatus rs
+    entryToDatedStatus (RawEntry i rs) = DatedStatus i . toMetaStatus <$> validateStatus rs
     sparseDatedStatuses = sequenceE (entryToDatedStatus <$> entries)
     clippedDenseDatedStatuses = fillInGaps . fitClip ds <$> sparseDatedStatuses
   in

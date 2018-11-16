@@ -3,10 +3,11 @@
 {-# language LambdaCase #-}
 {-# language ScopedTypeVariables #-}
 
-module J.Cycles.Streengs(allPtrs, applyEdits, searchForDays, Entry(..), RawStatus(..), consLog) where
+module J.Cycles.Streengs(allPtrs, applyEdits, searchForDays, consLog) where
 
 import Data.Foldable(traverse_)
 import Data.List(intercalate)
+import Data.Maybe(fromJust)
 import Data.Time(Day(..), addDays)
 import Data.Word(Word8)
 
@@ -23,22 +24,13 @@ import qualified Data.Map as Map
 import qualified System.IO.MMap as MMap
 import qualified System.IO.Unsafe as U
 import qualified System.Posix.Files as PF
-import qualified System.Posix.Types as PT(COff(..))
+import qualified System.Posix.Types as PT(FileOffset, COff(..))
 
 import J.Cycles.Types
 
-type TimeSpan = Interval Day
-
-data Entry = Entry {
-  _entryToInterval :: !TimeSpan
-, _entryRawStatus :: !RawStatus
-} deriving (Eq, Show)
-
-data RawStatus = Y | N | U !Char deriving (Eq, Show)
-
 {-# inline entryLocs #-}
 -- todo: why not return a `Ptr (Interval Day)` instead?
-entryLocs :: Ptr Entry -> (Ptr Day, Ptr Day, Ptr RawStatus)
+entryLocs :: Ptr RawEntry -> (Ptr Day, Ptr Day, Ptr RawStatus)
 entryLocs p =
   let
     sp = castPtr p
@@ -47,20 +39,20 @@ entryLocs p =
   in
     (sp, ep, stp)
 
-instance Storable Entry where
+instance Storable RawEntry where
     -- one 64-bit int for each time, one byte for status
   sizeOf _ = sizeOf (undefined :: Word64) * 2 + sizeOf (undefined :: Word8)
   alignment _ = 1
   peek p =
     let (sp, ep, stp) = entryLocs p in
-      Entry <$> (Interval <$> peekDay sp <*> peekDay ep) <*> peekRawStatus stp
-  poke p (Entry (Interval s e) st) =
+      RawEntry <$> (Interval <$> peekDay sp <*> peekDay ep) <*> peekRawStatus stp
+  poke p (RawEntry (Interval s e) st) =
     let (sp, ep, stp) = entryLocs p in
       pokeDay sp s >> pokeDay ep e >> pokeRawStatus stp st
 
 {-# inline conlike entrySize #-}
 entrySize :: Int
-entrySize = sizeOf (undefined :: Entry)
+entrySize = sizeOf (undefined :: RawEntry)
 
 {-# inline pokeDay #-}
 pokeDay :: Ptr Day -> Day -> IO ()
@@ -253,15 +245,15 @@ contpareIntervals (Interval k1 k2) (Interval k1' k2') =
     EQ
 
 {-# inline entryStart #-}
-entryStart :: Entry -> Day
+entryStart :: RawEntry -> Day
 entryStart = intervalStart . _entryToInterval
 
 {-# inline entryEnd #-}
-entryEnd :: Entry -> Day
+entryEnd :: RawEntry -> Day
 entryEnd = intervalEnd . _entryToInterval
 
 {-# inline searchForDays #-}
-searchForDays :: Interval Day -> FilePath -> IO [Entry]
+searchForDays :: Interval Day -> FilePath -> IO [RawEntry]
 searchForDays = binRangeQueryFile peek _entryToInterval
 --
 -- ==============================================================================
@@ -290,50 +282,54 @@ memcpy tgt (SizedPtr s src) = go 0 where
 singInterval :: Day -> Interval Day
 singInterval d = Interval d (addDays 1 d)
 
+-- this should amortize more.
 applyEdits :: PendingEdits -> FilePath -> IO ()
 applyEdits (PendingEdits edits) logPath = traverse_ (uncurry loadEdit) (Map.toList edits)
   where
-    -- How the FUCK do I insert unknown? Do I have to store unknown?
-    -- wouldn't solve anything, we still won't be populated for unknown times anyway
     -- gonna have to delete/shrink other intervals
     -- todo: make this less slow in the presence of multiple non-tail edits.
     loadEdit :: Day -> MetaStatus -> IO ()
-    loadEdit _ UnknownM = error "I can't delete entries yet"
-    loadEdit d OffM = consLog (Entry (singInterval d) N) logPath
-    loadEdit d OnM = consLog (Entry (singInterval d) Y) logPath
+    loadEdit d s = consEdit (Edit d s) logPath
 
-consLog :: Entry -> FilePath -> IO ()
-consLog e logPath = do
+fileSize :: FilePath -> IO (PT.FileOffset)
+fileSize logPath = do
   logExists <- PF.fileExist logPath
-  logSizeOff <-
-    if
-      logExists
-    then
-      PF.fileSize <$> PF.getFileStatus logPath
-    else
-      pure $ PT.COff 0
+  if
+    logExists
+  then
+    PF.fileSize <$> PF.getFileStatus logPath
+  else
+    pure $ PT.COff 0
+
+editToEntry :: Edit -> Maybe RawEntry
+editToEntry (Edit d s) = RawEntry (singInterval d) . statusToRawStatus <$> fromMetaStatus s
+
+consEdit :: Edit -> FilePath -> IO ()
+consEdit e logPath = do
+  logSizeOff <- fileSize logPath
   let logSizeBytes = fromIntegral logSizeOff
   let newLogSize = logSizeBytes + entrySize
   MMap.mmapWithFilePtr logPath MMap.ReadWriteEx (Just (0,newLogSize)) (\(fp, s) -> do
       if
         logSizeBytes == 0
       then do
-        poke (castPtr fp) e
+        poke (castPtr fp) (fromJust $ editToEntry e)
       else
         do
-          place <- binSearchInsertionPoint (\k a -> contpareIntervals k (_entryToInterval a)) (_entryToInterval e) (SizedPtr ((s - 1) `div` entrySize) (castPtr fp))
-          end <- peek (fp `plusPtr` (logSizeBytes - entrySize)) :: IO Entry
+          -- why do this search if `_editDay e > entryEnd end`?
+          place <- binSearchInsertionPoint (\k a -> contpareIntervals k (_entryToInterval a)) (singInterval $ _editDay e) (SizedPtr ((s - 1) `div` entrySize) (castPtr fp))
+          end <- peek (fp `plusPtr` (logSizeBytes - entrySize)) :: IO RawEntry
           res <- case place of
             InsertAtPtr placePtr -> do
-              if entryStart e > entryEnd end
+              if _editDay e > entryEnd end
                 then
-                  Right <$> poke (fp `plusPtr` logSizeBytes) e
+                  Right <$> poke (fp `plusPtr` logSizeBytes) (fromJust $ editToEntry e)
                 else
                   MMap.mmapWithFilePtr (logPath ++ ".bak") MMap.ReadWriteEx (Just (0, ((fp `plusPtr` logSizeBytes) `minusPtr` placePtr))) (\(bfp, bs) -> do
                     let numElems = (bs `div` entrySize)
                     memcpy (castPtr bfp) (SizedPtr numElems placePtr)
-                    poke (castPtr placePtr) e
-                    memcpy ((placePtr `plusPtr` entrySize) :: Ptr Entry) (SizedPtr numElems (castPtr bfp))
+                    poke (castPtr placePtr) (fromJust $ editToEntry e)
+                    memcpy ((placePtr `plusPtr` entrySize) :: Ptr RawEntry) (SizedPtr numElems (castPtr bfp))
                     pure (Right ())
                   )
             ConflictsWith ptrs -> do
@@ -344,4 +340,39 @@ consLog e logPath = do
               PF.setFileSize logPath logSizeOff
             _ -> pure ()
     )
-    -- consFiles (0, 0) e paths
+
+consLog :: RawEntry -> FilePath -> IO ()
+consLog e logPath = do
+  logSizeOff <- fileSize logPath
+  let logSizeBytes = fromIntegral logSizeOff
+  let newLogSize = logSizeBytes + entrySize
+  MMap.mmapWithFilePtr logPath MMap.ReadWriteEx (Just (0,newLogSize)) (\(fp, s) -> do
+      if
+        logSizeBytes == 0
+      then do
+        poke (castPtr fp) e
+      else
+        do
+          place <- binSearchInsertionPoint (\k a -> contpareIntervals k (_entryToInterval a)) (_entryToInterval e) (SizedPtr ((s - 1) `div` entrySize) (castPtr fp))
+          end <- peek (fp `plusPtr` (logSizeBytes - entrySize)) :: IO RawEntry
+          res <- case place of
+            InsertAtPtr placePtr -> do
+              if entryStart e > entryEnd end
+                then
+                  Right <$> poke (fp `plusPtr` logSizeBytes) e
+                else
+                  MMap.mmapWithFilePtr (logPath ++ ".bak") MMap.ReadWriteEx (Just (0, ((fp `plusPtr` logSizeBytes) `minusPtr` placePtr))) (\(bfp, bs) -> do
+                    let numElems = (bs `div` entrySize)
+                    memcpy (castPtr bfp) (SizedPtr numElems placePtr)
+                    poke (castPtr placePtr) e
+                    memcpy ((placePtr `plusPtr` entrySize) :: Ptr RawEntry) (SizedPtr numElems (castPtr bfp))
+                    pure (Right ())
+                  )
+            ConflictsWith ptrs -> do
+              (Left . intercalate ",") <$> (traverse (fmap show . peek) ptrs)
+          case res of
+            Left els -> do
+              putStrLn $ "Input entry (" ++ show e ++ ") conflicts with other entries: " ++ els ++ " and overwriting isn't implemented yet"
+              PF.setFileSize logPath logSizeOff
+            _ -> pure ()
+    )

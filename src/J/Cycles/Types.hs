@@ -5,6 +5,7 @@
 
 module J.Cycles.Types(
   Status(..), MetaStatus(..), toMetaStatus, fromMetaStatus
+, RawStatus(..), statusToRawStatus
 , Interval(..), intervalContains, intervalStart, intervalEnd
 , DatedStatus(..), datedStatus, statusDates
 , PendingEdits(..)
@@ -12,6 +13,7 @@ module J.Cycles.Types(
 , forgetCS, forgetVS, freshPVS
 , ViewerConfig(..), ViewerEvent(..), ViewerState(..), printViewerConfig, printViewerState
 , InvalidStatus(..), LogParsingError(..), LoadViewerStateError(..)
+, RawEntry(..), Edit(..)
 ) where
 
 import Control.DeepSeq(NFData)
@@ -189,3 +191,19 @@ data LoadViewerStateError
   = ErrorsParsingState !(NonEmpty (String, LogParsingError))
   | LogFolderEmpty
   | LogFolderMissing deriving Show
+
+data RawStatus = Y | N | U !Char deriving (Eq, Show)
+
+statusToRawStatus :: Status -> RawStatus
+statusToRawStatus On = Y
+statusToRawStatus Off = N
+
+data RawEntry = RawEntry {
+  _entryToInterval :: !(Interval Day)
+, _entryRawStatus :: !RawStatus
+} deriving (Eq, Show)
+
+data Edit = Edit {
+  _editDay :: Day
+, _editStatus :: MetaStatus
+} deriving Show

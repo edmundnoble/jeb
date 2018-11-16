@@ -61,7 +61,7 @@ library j-lib
                      , J.Logging
                      , J.Indexing.Main, J.Indexing.Types
                      , J.Indexing.Streengs
-                     , J.Cycles.Main, J.Cycles.Types
+                     , J.Cycles.Graphics, J.Cycles.Main, J.Cycles.Types
                      , J.Cycles.Streengs
   build-depends:       base >=4.10 && <4.11
                      , aeson

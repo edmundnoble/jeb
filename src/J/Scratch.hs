@@ -76,13 +76,13 @@ day7 = read "2018-10-31" :: Day
 day15 = read "2018-11-03" :: Day
 day16 = read "2018-11-04" :: Day
 
-es = [Entry (Interval day1 day3) Y, Entry (Interval day3 day4) N, Entry (Interval day4 day5) Y, Entry (Interval day7 day15) N]
+es = [RawEntry (Interval day1 day3) Y, RawEntry (Interval day3 day4) N, RawEntry (Interval day4 day5) Y, RawEntry (Interval day7 day15) N]
 
 fuckit = flip catch (\(e :: SomeException) -> pure undefined)
 
-we1 = Entry (Interval (read "2001-01-05") (read "2001-01-06")) Y
-we2 = Entry (Interval (read "2001-01-01") (read "2001-01-02")) Y
-we3 = Entry (Interval (read "2001-01-03") (read "2001-01-04")) Y
+we1 = RawEntry (Interval (read "2001-01-05") (read "2001-01-06")) Y
+we2 = RawEntry (Interval (read "2001-01-01") (read "2001-01-02")) Y
+we3 = RawEntry (Interval (read "2001-01-03") (read "2001-01-04")) Y
 
 -- es2 = readEs "entries"
 
@@ -118,7 +118,7 @@ readS fp =
 readP :: forall a. Storable a => Ptr a -> Int -> IO [a]
 readP ptr s = traverse peek (allPtrs ptr s)
 
-readEs :: FilePath -> IO [Entry]
+readEs :: FilePath -> IO [RawEntry]
 readEs = readS
 
 mergeLs :: (a -> a -> Ordering) -> [a] -> [a] -> [a]
