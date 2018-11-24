@@ -28,6 +28,7 @@ import Data.List.NonEmpty(NonEmpty(..))
 import Data.Maybe
 import Data.Time
 import GHC.IO.Unsafe
+import System.IO.MMap(mmapWithFilePtr)
 
 import Text.PrettyPrint.ANSI.Leijen(Pretty(..), text, line, nest)
 
@@ -57,10 +58,10 @@ bm = brickMain vc
 
 d = read "2001-01-01"
 
-shiteI :: Interval Day
-shiteI = Interval (read "2018-10-28") (read "2018-11-04")
+shiteI :: TimeSpan
+shiteI = TimeSpan (read "2018-10-28") (read "2018-11-04")
 
-idn n1 n2 = Interval (n1 `addDays` d) (n2 `addDays` d)
+idn n1 n2 = TimeSpan (n1 `addDays` d) (n2 `addDays` d)
 
 -- myWidgetL = flip showViewer (idn 0 8) cyclePaths
 
@@ -76,13 +77,13 @@ day7 = read "2018-10-31" :: Day
 day15 = read "2018-11-03" :: Day
 day16 = read "2018-11-04" :: Day
 
-es = [RawEntry (Interval day1 day3) Y, RawEntry (Interval day3 day4) N, RawEntry (Interval day4 day5) Y, RawEntry (Interval day7 day15) N]
+es = [RawEntry (TimeSpan day1 day3) Y, RawEntry (TimeSpan day3 day4) N, RawEntry (TimeSpan day4 day5) Y, RawEntry (TimeSpan day7 day15) N]
 
 fuckit = flip catch (\(e :: SomeException) -> pure undefined)
 
-we1 = RawEntry (Interval (read "2001-01-05") (read "2001-01-06")) Y
-we2 = RawEntry (Interval (read "2001-01-01") (read "2001-01-02")) Y
-we3 = RawEntry (Interval (read "2001-01-03") (read "2001-01-04")) Y
+we1 = RawEntry (TimeSpan (read "2001-01-05") (read "2001-01-06")) Y
+we2 = RawEntry (TimeSpan (read "2001-01-01") (read "2001-01-02")) Y
+we3 = RawEntry (TimeSpan (read "2001-01-03") (read "2001-01-04")) Y
 
 -- es2 = readEs "entries"
 
@@ -113,26 +114,17 @@ writeEs fp as = do
 
 readS :: forall a. Storable a => FilePath -> IO [a]
 readS fp =
-  MMap.mmapWithFilePtr fp MMap.ReadOnly Nothing (\(p, s) -> readP (castPtr p) s)
+  mmapWithFilePtr fp MMap.ReadOnly Nothing (\(p, s) -> readP (castPtr p) s)
 
 readP :: forall a. Storable a => Ptr a -> Int -> IO [a]
-readP ptr s = traverse peek (allPtrs ptr s)
+readP ptr s =
+  if s == 0 then pure [] else NonEmpty.toList <$> traverse peek (allPtrs ptr s)
 
 readEs :: FilePath -> IO [RawEntry]
 readEs = readS
-
-mergeLs :: (a -> a -> Ordering) -> [a] -> [a] -> [a]
-mergeLs f = go where
-  go (x:xs) (y:ys) = case x `f` y of
-    LT -> x:(go xs (y:ys))
-    GT -> y:(go (x:xs) ys)
-    EQ -> error "wtf, intersecting intervals?"
-  go xs [] = xs
-  go [] ys = ys
-
 
       -- consFiles a fpn ((n,k):fps) = MMap.mmapWithFile
       -- consFiles a fpn [] = MMap.mmapWithFile
 
 -- queryLog :: _1 -> _2
--- myFirstCH = renderCycleHistory myPalette (Interval d (5 `addDays` d)) (head myDayMap)
+-- myFirstCH = renderCycleHistory myPalette (TimeSpan d (5 `addDays` d)) (head myDayMap)

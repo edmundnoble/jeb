@@ -66,37 +66,37 @@ validateStatus (U c) = Left (InvalidStatus c)
 
 -- likely generalizable to any intervals
 fillInGaps :: NonEmpty DatedStatus -> NonEmpty DatedStatus
-fillInGaps (ds1@(DatedStatus (Interval _ e) _):|ds2@(DatedStatus (Interval s _) _):xs)
+fillInGaps (ds1@(DatedStatus (TimeSpan _ e) _):|ds2@(DatedStatus (TimeSpan s _) _):xs)
   | e < s =
     let
-      intervening = Interval e s
+      intervening = TimeSpan e s
     in
       ds1:|((DatedStatus intervening UnknownM):(NonEmpty.toList $ fillInGaps (ds2:|xs)))
 fillInGaps (d:|(x:xs)) = d :| (NonEmpty.toList (fillInGaps (x:|xs)))
 fillInGaps (d:|[]) = d:|[]
 
 -- also likely generalizable to any intervals
-fitClip :: Interval Day -> [DatedStatus] -> NonEmpty DatedStatus
+fitClip :: TimeSpan -> [DatedStatus] -> NonEmpty DatedStatus
 fitClip i [] = singletonNE $ DatedStatus i UnknownM
-fitClip (Interval sl el) ([ds@(DatedStatus (Interval start end) st)]) =
+fitClip (TimeSpan sl el) ([ds@(DatedStatus (TimeSpan start end) st)]) =
   let
-    elLeft = DatedStatus (Interval sl start) UnknownM
-    elRight = DatedStatus (Interval end el) UnknownM
+    elLeft = DatedStatus (TimeSpan sl start) UnknownM
+    elRight = DatedStatus (TimeSpan end el) UnknownM
   in
     NonEmpty.fromList $ case (start > sl, end <= el) of
       (True, True) -> [elLeft, ds, elRight]
-      (False, True) -> [DatedStatus (Interval sl end) st, elRight]
-      (True, False) -> [elLeft, DatedStatus (Interval start el) st]
-      (False, False) -> [DatedStatus (Interval sl el) st]
+      (False, True) -> [DatedStatus (TimeSpan sl end) st, elRight]
+      (True, False) -> [elLeft, DatedStatus (TimeSpan start el) st]
+      (False, False) -> [DatedStatus (TimeSpan sl el) st]
 
-fitClip (Interval sl el) (d@(DatedStatus (Interval start _) _):ds) =
+fitClip (TimeSpan sl el) (d@(DatedStatus (TimeSpan start _) _):ds) =
   let
-    lds@(DatedStatus (Interval _ lend) _) = last ds
+    lds@(DatedStatus (TimeSpan _ lend) _) = last ds
     i = init ds
-    elLeft = DatedStatus (Interval sl start) UnknownM
-    elRight = DatedStatus (Interval lend el) UnknownM
-    clipL (DatedStatus (Interval s e) t) = flip DatedStatus t $ if s < sl then Interval sl e else Interval s e
-    clipR (DatedStatus (Interval s e) t) = flip DatedStatus t $ if e > el then Interval s el else Interval s e
+    elLeft = DatedStatus (TimeSpan sl start) UnknownM
+    elRight = DatedStatus (TimeSpan lend el) UnknownM
+    clipL (DatedStatus (TimeSpan s e) t) = flip DatedStatus t $ if s < sl then TimeSpan sl e else TimeSpan s e
+    clipR (DatedStatus (TimeSpan s e) t) = flip DatedStatus t $ if e > el then TimeSpan s el else TimeSpan s e
   in
     NonEmpty.fromList $ case (start > sl, lend <= el) of
       (True, True) ->   [elLeft,clipL d] ++ i ++ [clipR lds,elRight]
@@ -105,7 +105,7 @@ fitClip (Interval sl el) (d@(DatedStatus (Interval start _) _):ds) =
       (False, False) -> [clipL d] ++        i ++ [clipR lds]
 
 prepareRawEntries ::
-  Interval Day ->
+  TimeSpan ->
   [RawEntry] ->
   Either (NonEmpty InvalidStatus) (NonEmpty DatedStatus)
 prepareRawEntries ds entries =
@@ -116,7 +116,7 @@ prepareRawEntries ds entries =
   in
     clippedDenseDatedStatuses
 
-loadBetweenInterval :: Interval Day -> FilePath -> IO (Either LogParsingError (NonEmpty DatedStatus))
+loadBetweenInterval :: TimeSpan -> FilePath -> IO (Either LogParsingError (NonEmpty DatedStatus))
 loadBetweenInterval ds filePath =
   let
     rawEntries = Streengs.searchForDays ds filePath
@@ -193,9 +193,9 @@ loadToState vc pvs = do
 doToAll :: Applicative f => (String -> CycleState -> f CycleState) -> ViewerState -> f ViewerState
 doToAll f vs = fmap (\cs -> vs { _cycleStates = cs }) (Map.traverseWithKey f (_cycleStates vs))
 
-shiftIntervalRight :: Integral a => a -> Interval Day -> Interval Day
-shiftIntervalRight n (Interval s e) =
-  let ad = addDays (fromIntegral n) in Interval (ad s) (ad e)
+shiftIntervalRight :: Integral a => a -> TimeSpan -> TimeSpan
+shiftIntervalRight n (TimeSpan s e) =
+  let ad = addDays (fromIntegral n) in TimeSpan (ad s) (ad e)
 
 moveViewerRight :: Integral a => a -> ViewerConfig -> PartialViewerState -> IO ViewerState
 moveViewerRight n vc pvs =
@@ -431,7 +431,7 @@ initialState ::
 initialState vc = do
   left <- adjustToday (fromIntegral $ -(_configIntervalSize vc - 1))
   right <- adjustToday 1
-  let ds = Interval left right
+  let ds = TimeSpan left right
   loadToState vc (freshPVS ds)
 
 app :: AttrMap -> ViewerConfig -> App ViewerState ViewerEvent ()

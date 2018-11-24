@@ -114,8 +114,8 @@ cycleViewerWidget _ _ _ _ =
   str "No entries in log!"
 
 -- todo: display time deltas from today somewhere too
-drawTimeline :: Int -> Interval Day -> Widget a
-drawTimeline dayWidth (Interval start end) =
+drawTimeline :: Int -> TimeSpan -> Widget a
+drawTimeline dayWidth (TimeSpan start end) =
   hBox (vLimit 3 . hLimit dayWidth . center . str . show <$> [start..(addDays (-1) end)])
 
 showViewerFromState :: ViewerState -> [Widget ()]

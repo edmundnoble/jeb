@@ -2,27 +2,34 @@
 {-# language DeriveGeneric #-}
 {-# language TemplateHaskell #-}
 {-# language NamedFieldPuns #-}
+{-# language LambdaCase #-}
+{-# language MagicHash #-}
 
 module J.Cycles.Types(
   Status(..), MetaStatus(..), toMetaStatus, fromMetaStatus
 , RawStatus(..), statusToRawStatus
-, Interval(..), intervalContains, intervalStart, intervalEnd
+, TimeSpan(..), intervalContains, intervalStart, intervalEnd, contpareTimeSpans, timespansIntersect, spanContainsSpan
 , DatedStatus(..), datedStatus, statusDates
 , PendingEdits(..)
 , CycleHistory(..), CycleState(..), PartialCycleState(..), PartialViewerState(..), printCycleState
 , forgetCS, forgetVS, freshPVS
 , ViewerConfig(..), ViewerEvent(..), ViewerState(..), printViewerConfig, printViewerState
 , InvalidStatus(..), LogParsingError(..), LoadViewerStateError(..)
-, RawEntry(..), Edit(..)
+, RawEntry(..), entrySize
+, Edit(..)
 ) where
 
 import Control.DeepSeq(NFData)
-import Data.List(intercalate)
 import Data.List.NonEmpty(NonEmpty)
 import Data.Map.Strict(Map)
-import Data.Time.Calendar(Day)
+import Data.Time.Calendar(Day(..))
 import Data.Semigroup(Semigroup(..))
+import Foreign.Ptr(Ptr, castPtr, plusPtr)
+import Foreign.Storable(Storable(..))
 import GHC.Generics(Generic)
+import GHC.Prim(chr#, word2Int#)
+import GHC.Types(Char(C#))
+import GHC.Word(Word8(W8#), Word64)
 import Text.PrettyPrint.ANSI.Leijen(Pretty(..), text)
 
 import qualified Data.Map.Strict as Map
@@ -42,22 +49,56 @@ fromMetaStatus OnM = Just On
 fromMetaStatus OffM = Just Off
 fromMetaStatus UnknownM = Nothing
 
-data Interval a = Interval !a !a deriving (Eq, Show)
+data TimeSpan = TimeSpan {-# unpack #-} !Day {-# unpack #-} !Day deriving (Eq, Show)
 
-instance Pretty a => Pretty (Interval a) where
-  pretty (Interval s e) = pretty s <> text " -> " <> pretty e
+instance Pretty TimeSpan where
+  pretty (TimeSpan s e) = text (show s <> " -> " <> show e)
 
 {-# inline intervalStart #-}
-intervalStart :: Interval a -> a
-intervalStart (Interval a _) = a
+intervalStart :: TimeSpan -> Day
+intervalStart (TimeSpan a _) = a
 
 {-# inline intervalEnd #-}
-intervalEnd :: Interval a -> a
-intervalEnd (Interval _ a) = a
+intervalEnd :: TimeSpan -> Day
+intervalEnd (TimeSpan _ a) = a
 
 {-# inline intervalContains #-}
-intervalContains :: Ord a => Interval a -> a -> Bool
-intervalContains (Interval s e) a = s <= a && a <= e
+intervalContains :: TimeSpan -> Day -> Bool
+intervalContains (TimeSpan s e) a = s <= a && a < e
+
+{-# inline spanContainsSpan #-}
+spanContainsSpan :: TimeSpan -> TimeSpan -> Bool
+spanContainsSpan (TimeSpan k1 k2) (TimeSpan k1' k2') = k1 <= k1' && k2' <= k2
+
+{-# inline timespansIntersect #-}
+timespansIntersect :: TimeSpan -> TimeSpan -> Bool
+timespansIntersect i1 i2 = (contpareTimeSpans i1 i2) == EQ
+
+{-# inline clipTo #-}
+clipTo :: TimeSpan -> TimeSpan -> TimeSpan
+
+{-# inline contpareTimeSpans #-}
+contpareTimeSpans :: TimeSpan -> TimeSpan -> Ordering
+contpareTimeSpans (TimeSpan k1 k2) (TimeSpan k1' k2') =
+  -- closed on the right!
+  if
+    k2 == k1'
+  then
+    LT
+  else if
+    k2' == k1
+  then
+    GT
+  else if
+    (k1 < k1' && k2 < k2' && k2 < k1')
+  then
+    LT
+  else if
+    (k1' < k1 && k2' < k2 && k2' < k1)
+  then
+    GT
+  else
+    EQ
 
 data ViewerEvent
   = HideCycle !String
@@ -77,10 +118,10 @@ data ViewerEvent
   | Save
   | Debug deriving Show
 
-data DatedStatus = DatedStatus !(Interval Day) !MetaStatus deriving (Eq, Show)
+data DatedStatus = DatedStatus !(TimeSpan) !MetaStatus deriving (Eq, Show)
 
 {-# inline statusDates #-}
-statusDates :: DatedStatus -> Interval Day
+statusDates :: DatedStatus -> TimeSpan
 statusDates (DatedStatus i _) = i
 
 datedStatus :: DatedStatus -> MetaStatus
@@ -150,14 +191,14 @@ data PartialCycleState = PartialCycleState {
 data ViewerState = ViewerState {
   _cursor :: !Int
 , _cycleStates :: !(Map String CycleState)
-, _interval :: !(Interval Day)
+, _interval :: !TimeSpan
 , _selectedCycle :: !(Maybe String)
 }
 
 data PartialViewerState = PartialViewerState {
   _partialCursor :: !Int
 , _partialCycleStates :: !(Map String PartialCycleState)
-, _partialInterval :: !(Interval Day)
+, _partialInterval :: !TimeSpan
 , _partialSelectedCycle :: !(Maybe String)
 } deriving Show
 
@@ -173,7 +214,7 @@ forgetVS ViewerState {_interval, _selectedCycle, _cursor, _cycleStates} = Partia
 , _partialSelectedCycle = _selectedCycle
 }
 
-freshPVS :: Interval Day -> PartialViewerState
+freshPVS :: TimeSpan -> PartialViewerState
 freshPVS ds = PartialViewerState {
   _partialCursor = 0
 , _partialCycleStates = Map.empty
@@ -199,9 +240,62 @@ statusToRawStatus On = Y
 statusToRawStatus Off = N
 
 data RawEntry = RawEntry {
-  _entryToInterval :: !(Interval Day)
+  _entryToTimeSpan :: !TimeSpan
 , _entryRawStatus :: !RawStatus
 } deriving (Eq, Show)
+
+{-# inline entryLocs #-}
+-- todo: why not return a `Ptr (TimeSpan)` instead?
+entryLocs :: Ptr RawEntry -> (Ptr Day, Ptr Day, Ptr RawStatus)
+entryLocs p =
+  let
+    sp = castPtr p
+    ep = sp `plusPtr` sizeOf (undefined :: Word64)
+    stp = castPtr $ ep `plusPtr` sizeOf (undefined :: Word64)
+  in
+    (sp, ep, stp)
+
+{-# inline conlike entrySize #-}
+entrySize :: Int
+entrySize = sizeOf (undefined :: RawEntry)
+
+{-# inline pokeDay #-}
+pokeDay :: Ptr Day -> Day -> IO ()
+pokeDay p (ModifiedJulianDay d) = poke (castPtr p) (fromInteger d :: Word64)
+
+{-# inline peekDay #-}
+peekDay :: Ptr Day -> IO Day
+peekDay p = (ModifiedJulianDay . fromIntegral) <$> (peek (castPtr p) :: IO Word64)
+
+{-# inline pokeRawStatus #-}
+pokeRawStatus :: Ptr RawStatus -> RawStatus -> IO ()
+pokeRawStatus p s = poke p' $ case s of
+  N -> 'N'
+  Y -> 'Y'
+  U c -> c
+  where
+    p' = castPtr p
+
+{-# inline peekRawStatus #-}
+peekRawStatus :: Ptr RawStatus -> IO RawStatus
+peekRawStatus p = flip fmap (peek (castPtr p)) $ \case
+  W8# wu ->
+    case chr# (word2Int# wu) of
+      'Y'# -> Y
+      'N'# -> N
+      c -> U (C# c)
+
+
+instance Storable RawEntry where
+    -- one 64-bit int for each time, one byte for status
+  sizeOf _ = sizeOf (undefined :: Word64) * 2 + sizeOf (undefined :: Word8)
+  alignment _ = 1
+  peek p =
+    let (sp, ep, stp) = entryLocs p in
+      RawEntry <$> (TimeSpan <$> peekDay sp <*> peekDay ep) <*> peekRawStatus stp
+  poke p (RawEntry (TimeSpan s e) st) =
+    let (sp, ep, stp) = entryLocs p in
+      pokeDay sp s >> pokeDay ep e >> pokeRawStatus stp st
 
 data Edit = Edit {
   _editDay :: Day
