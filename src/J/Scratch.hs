@@ -18,16 +18,18 @@ import Data.Foldable(traverse_)
 import Foreign.Ptr(Ptr, castPtr, minusPtr, nullPtr, plusPtr)
 import Foreign.Storable
 
-import Control.Exception(SomeException, catch)
+import Control.Exception(SomeException, handle)
 import Control.Monad
 import Control.Monad.IO.Class(liftIO)
 import Data.Bifunctor(first)
 import Data.Either(fromRight)
+import Data.Foldable(traverse_)
 import Data.Map(Map)
 import Data.List.NonEmpty(NonEmpty(..))
 import Data.Maybe
 import Data.Time
 import GHC.IO.Unsafe
+import System.IO(openFile, hClose, IOMode(ReadWriteMode))
 import System.IO.MMap(mmapWithFilePtr)
 
 import Text.PrettyPrint.ANSI.Leijen(Pretty(..), text, line, nest)
@@ -79,11 +81,19 @@ day16 = read "2018-11-04" :: Day
 
 es = [RawEntry (TimeSpan day1 day3) Y, RawEntry (TimeSpan day3 day4) N, RawEntry (TimeSpan day4 day5) Y, RawEntry (TimeSpan day7 day15) N]
 
-fuckit = flip catch (\(e :: SomeException) -> pure undefined)
+fuckit = handle (\(e :: SomeException) -> pure undefined)
 
 we1 = RawEntry (TimeSpan (read "2001-01-05") (read "2001-01-06")) Y
 we2 = RawEntry (TimeSpan (read "2001-01-01") (read "2001-01-02")) Y
 we3 = RawEntry (TimeSpan (read "2001-01-03") (read "2001-01-04")) Y
+
+makeFile n = openFile n ReadWriteMode >>= hClose
+
+setupScratchLog logPath = do
+  fuckit (D.removeDirectoryRecursive logPath)
+  D.createDirectoryIfMissing False logPath
+  let paths = (logPath FP.</>) <$> ["A", "B", "C"]
+  traverse_ ((>>) <$> makeFile <*> flip writeEs es) paths
 
 -- es2 = readEs "entries"
 
@@ -93,12 +103,6 @@ scratch d = unsafePerformIO $ do
 scratchI t = unsafePerformIO $ do
   entries <- searchForDays t "entries"
   print entries
-
-serialize :: Storable a => Ptr a -> [a] -> IO ()
-serialize p xs = traverse_ serializeInd $ zip xs [0..]
-  where
-    serializeInd (x, i) =
-      pokeElemOff p i x
 
 -- l = length es * entrySize
 

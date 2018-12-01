@@ -25,19 +25,19 @@ class Category p => Products p where
   (***) :: p a b -> p a' b' -> p (a,a') (b,b')
 
 instance Products (->) where
-  first f = \(a, c) -> (f a, c)
-  second f = \(c, a) -> (c, f a)
-  f *** g = \(a, a') -> (f a, g a')
+  first f (a, c) = (f a, c)
+  second f (c, a) = (c, f a)
+  (f *** g) (a, a') = (f a, g a')
 
 instance Category (Log lv) where
   (Log l1) . (Log l2) = Log ((.) <$> l1 <*> l2)
   id = Log (const id)
 
 instance Profunctor (Log lv) where
-  dimap g f (Log l) = Log (\lv -> f . (l lv) . g)
+  dimap g f (Log l) = Log (\lv -> f . l lv . g)
 
 instance Functor (Log lv l) where
-  fmap f = dimap id f
+  fmap = dimap id
 
 levelledLog :: LogLevel -> String -> String
 levelledLog lv l = "[" ++ show lv ++ "] " ++ l

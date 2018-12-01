@@ -1,6 +1,5 @@
 {-# language DeriveAnyClass #-}
 {-# language DeriveGeneric #-}
-{-# language TemplateHaskell #-}
 {-# language NamedFieldPuns #-}
 {-# language LambdaCase #-}
 {-# language MagicHash #-}
@@ -72,33 +71,20 @@ spanContainsSpan (TimeSpan k1 k2) (TimeSpan k1' k2') = k1 <= k1' && k2' <= k2
 
 {-# inline timespansIntersect #-}
 timespansIntersect :: TimeSpan -> TimeSpan -> Bool
-timespansIntersect i1 i2 = (contpareTimeSpans i1 i2) == EQ
+timespansIntersect i1 i2 = contpareTimeSpans i1 i2 == EQ
 
 {-# inline clipTo #-}
 clipTo :: TimeSpan -> TimeSpan -> TimeSpan
+clipTo = undefined
 
 {-# inline contpareTimeSpans #-}
 contpareTimeSpans :: TimeSpan -> TimeSpan -> Ordering
-contpareTimeSpans (TimeSpan k1 k2) (TimeSpan k1' k2') =
-  -- closed on the right!
-  if
-    k2 == k1'
-  then
-    LT
-  else if
-    k2' == k1
-  then
-    GT
-  else if
-    (k1 < k1' && k2 < k2' && k2 < k1')
-  then
-    LT
-  else if
-    (k1' < k1 && k2' < k2 && k2' < k1)
-  then
-    GT
-  else
-    EQ
+contpareTimeSpans (TimeSpan k1 k2) (TimeSpan k1' k2')
+  | k2 == k1' = LT
+  | k2' == k1 = GT
+  | k1 < k1' && k2 < k2' && k2 < k1' = LT
+  | k1' < k1 && k2' < k2 && k2' < k1 = GT
+  | otherwise = EQ
 
 data ViewerEvent
   = HideCycle !String
@@ -118,7 +104,7 @@ data ViewerEvent
   | Save
   | Debug deriving Show
 
-data DatedStatus = DatedStatus !(TimeSpan) !MetaStatus deriving (Eq, Show)
+data DatedStatus = DatedStatus !TimeSpan !MetaStatus deriving (Eq, Show)
 
 {-# inline statusDates #-}
 statusDates :: DatedStatus -> TimeSpan
@@ -148,8 +134,11 @@ printViewerConfig ViewerConfig {
 newtype PendingEdits = PendingEdits { _getPendingEdits :: Map Day MetaStatus }
   deriving Show
 
-instance Monoid (PendingEdits) where
-  mappend (PendingEdits e1) (PendingEdits e2) = PendingEdits (Map.union e1 e2)
+instance Semigroup PendingEdits where
+  (PendingEdits e1) <> (PendingEdits e2) = PendingEdits (Map.union e1 e2)
+
+instance Monoid PendingEdits where
+  mappend = (<>)
   mempty = PendingEdits Map.empty
 
 data CycleState = CycleState {
@@ -167,7 +156,7 @@ printViewerState ViewerState {
   _selectedCycle
 } =
   "Cursor offset: " ++ show _cursor ++
-  "\nCycle states: " ++ (printCycleStates _cycleStates) ++
+  "\nCycle states: " ++ printCycleStates _cycleStates ++
   "\nInterval: " ++ show _interval ++
   "\nSelected cycle: " ++ show _selectedCycle
 
@@ -265,7 +254,7 @@ pokeDay p (ModifiedJulianDay d) = poke (castPtr p) (fromInteger d :: Word64)
 
 {-# inline peekDay #-}
 peekDay :: Ptr Day -> IO Day
-peekDay p = (ModifiedJulianDay . fromIntegral) <$> (peek (castPtr p) :: IO Word64)
+peekDay p = ModifiedJulianDay . fromIntegral <$> peek (castPtr p :: Ptr Word64)
 
 {-# inline pokeRawStatus #-}
 pokeRawStatus :: Ptr RawStatus -> RawStatus -> IO ()
@@ -285,7 +274,6 @@ peekRawStatus p = flip fmap (peek (castPtr p)) $ \case
       'N'# -> N
       c -> U (C# c)
 
-
 instance Storable RawEntry where
     -- one 64-bit int for each time, one byte for status
   sizeOf _ = sizeOf (undefined :: Word64) * 2 + sizeOf (undefined :: Word8)
@@ -297,7 +285,5 @@ instance Storable RawEntry where
     let (sp, ep, stp) = entryLocs p in
       pokeDay sp s >> pokeDay ep e >> pokeRawStatus stp st
 
-data Edit = Edit {
-  _editDay :: Day
-, _editStatus :: MetaStatus
-} deriving Show
+data Edit = Edit !TimeSpan !(Maybe Status) deriving Show
+

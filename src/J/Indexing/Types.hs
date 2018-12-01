@@ -7,6 +7,7 @@ module J.Indexing.Types where
 import Control.Comonad(Comonad(..))
 import Control.DeepSeq(NFData)
 import Control.Lens(foldMapOf, makeClassyPrisms, makeLenses, makePrisms, over, traverseOf)
+import Control.Monad(join)
 
 import Data.Map(Map)
 
@@ -65,13 +66,13 @@ data ErrorReadingDocument =
   | EmptyDocument
 
 makeIndent :: Int -> String
-makeIndent n = [0..n] >>= (const "  ")
+makeIndent n = join $ replicate n "  "
 
 indentLines :: Int -> String -> String
-indentLines n = unlines . fmap ((++) (makeIndent n)) . lines
+indentLines n = unlines . fmap (makeIndent n ++) . lines
 
 instance Show ErrorReadingDocument where
-  show (NoTagSectionFound) = "NoTagSectionFound"
+  show NoTagSectionFound = "NoTagSectionFound"
   show (EmptyTagSection (Position line)) = "EmptyTagSection at line " ++ show line
   show (TagsFailedToParse t) =
     "TagsFailedToParse on line " ++ (show . _location) t ++ ":\n" ++ (indentLines 1 . show . _anywhere) t
@@ -88,13 +89,13 @@ data ErrorReadingTagMap =
 
 makeClassyPrisms 'InvalidIndentation
 
-data ErrorFindingTag =
+newtype ErrorFindingTag =
     CouldntFindTagPrefix UnprefixedTag
     deriving Show
 
 makeClassyPrisms 'CouldntFindTagPrefix
 
-data ErrorWritingTagLinks =
+newtype ErrorWritingTagLinks =
     UnresolvedTag String
     deriving Show
 
@@ -105,10 +106,13 @@ data AllErrors =
     AllErrors [ErrorReadingTagMap] [ErrorReadingDocument] [ErrorFindingTag] [ErrorWritingTagLinks]
   deriving (Show)
 
-instance Monoid AllErrors where
-  mempty = AllErrors [] [] [] []
-  mappend (AllErrors ertms erds efts ewtls) (AllErrors ertms' erds' efts' ewtls') =
+instance Semigroup AllErrors where
+  (AllErrors ertms erds efts ewtls) <> (AllErrors ertms' erds' efts' ewtls') =
     AllErrors (ertms ++ ertms') (erds ++ erds') (efts ++ efts') (ewtls ++ ewtls')
+
+instance Monoid AllErrors where
+  mappend = (<>)
+  mempty = AllErrors [] [] [] []
 
 collectErrors :: [AnyErrors] -> AllErrors
 collectErrors = go mempty where

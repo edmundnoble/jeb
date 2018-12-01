@@ -25,7 +25,7 @@ executable j
                        , J.Cycles.Graphics, J.Cycles.Main, J.Cycles.Types
                        , J.Cycles.Streengs
   ghc-options:         -Wall -threaded +RTS -N -RTS
-  build-depends:       base >=4.10 && <4.11
+  build-depends:       base >=4.10 && <4.12
                      , aeson
                      , ansi-terminal
                      , ansi-wl-pprint
@@ -63,7 +63,7 @@ library j-lib
                      , J.Indexing.Streengs
                      , J.Cycles.Graphics, J.Cycles.Main, J.Cycles.Types
                      , J.Cycles.Streengs
-  build-depends:       base >=4.10 && <4.11
+  build-depends:       base >=4.10 && <4.12
                      , aeson
                      , ansi-terminal
                      , ansi-wl-pprint

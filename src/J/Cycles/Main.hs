@@ -16,6 +16,7 @@ import Brick.Types hiding (Max, Down)
 import Brick.Util(clamp)
 
 import Control.Applicative((<|>))
+import Control.Exception(evaluate)
 import Control.Monad.IO.Class(liftIO)
 import Data.Bifunctor(Bifunctor(..))
 import Data.Either(fromRight)
@@ -448,7 +449,9 @@ brickMain :: ViewerConfig -> IO ()
 brickMain vc = do
   customizedTheme <- fromRight undefined <$> loadCustomizations "theme.ini" defaultTheme
   let mapping = themeToAttrMap customizedTheme
-  is <- fromRight (error "error in initialstate") <$> initialState vc
+  initialStateOrErr <- initialState vc
+  print (printViewerState <$> initialStateOrErr)
+  is <- evaluate (fromRight (error "error in initialstate") initialStateOrErr)
   _ <- customMain
     (Vty.mkVty Vty.defaultConfig)
     Nothing (app mapping vc) is
