@@ -6,16 +6,14 @@
 module J.Cycles.Streengs where -- (allPtrs, applyEdits, searchForDays, consLog) where
 
 import Control.Monad(guard, join)
-import Debug.Trace
 import Data.Foldable(traverse_)
 import Data.Functor(($>))
 import Data.List((\\))
 import Data.List.NonEmpty(NonEmpty(..))
-import Data.Maybe(fromJust,maybeToList)
+import Data.Maybe(maybeToList)
 import Data.Proxy(Proxy(..))
 import Data.Time(Day(..), addDays)
 import Data.Semigroup((<>))
-import Data.Semigroup.Foldable(intercalate1)
 
 import Foreign.Ptr(Ptr, castPtr, minusPtr, plusPtr)
 import Foreign.Storable(Storable(..))
@@ -24,12 +22,28 @@ import qualified Data.Map as Map
 import qualified Data.List.NonEmpty as NonEmpty
 
 import qualified System.IO.MMap as MMap
+import qualified System.IO.Unsafe as U
 import qualified System.Posix.Files as PF
 import qualified System.Posix.Types as PT(FileOffset, COff(..))
 
 import J.Cycles.Types
 
 data SizedPtr a = SizedPtr {-# unpack #-} !Int {-# unpack #-} !(Ptr a) deriving Show
+
+trace :: String -> b -> b
+trace m b = U.unsafePerformIO (appendFile "log" (m ++ "\n") $> b)
+
+traceShow :: Show a => a -> b -> b
+traceShow a b = trace (show a) b
+
+traceShowId :: Show a => a -> a
+traceShowId a = traceShow a a
+
+traceM :: String -> IO ()
+traceM m = return $! trace m ()
+
+traceShowM :: Show a => a -> IO a
+traceShowM a = return $! traceShowId a
 
 eval :: IO a -> IO a
 eval io = io >>= (return $!)
@@ -146,7 +160,7 @@ binSearchInsertionPoint !contpare !k !szp = eval (go szp) where
             LT ->
               ltRec
             EQ ->
-              combinePoints (ConflictsWith (mid:|[])) <$> (combinePoints <$> ltRec <*> rtRec)
+              combinePoints <$> ltRec <*> rtRec
 
 {-# inline binRangeQueryFile #-}
 binRangeQueryFile :: forall a b.
@@ -174,6 +188,7 @@ entryEnd = intervalEnd . _entryToTimeSpan
 {-# inline searchForDays #-}
 searchForDays :: TimeSpan -> FilePath -> IO [RawEntry]
 searchForDays = binRangeQueryFile peek _entryToTimeSpan
+
 --
 -- ==============================================================================
 --
@@ -197,7 +212,7 @@ applyEdits :: PendingEdits -> FilePath -> IO ()
 applyEdits (PendingEdits edits) logPath =
   traverse_ (flip consLog logPath . editFrom) (Map.toList edits)
   where
-    editFrom (d, ms) = Edit (singTimeSpan d) (fromMetaStatus ms)
+    editFrom (d, ms) = traceShowId $ Edit (singTimeSpan d) (fromMetaStatus ms)
 
 fileSize :: FilePath -> IO PT.FileOffset
 fileSize logPath = do
@@ -227,7 +242,7 @@ replace en@(Edit ds newST) (RawEntry i@(TimeSpan s e) oldST:es)
     let
       new = RawEntry (TimeSpan (intervalStart ds) (intervalEnd i)) . statusToRawStatus <$> newST
     in
-      new : join (maybeToList (flip replace es <$> newEdit))
+      new : recc
   | intervalStart ds >= s && intervalEnd ds <= e =
     -- cut into two |---\---/---|
     -- also, no need to recurse further
@@ -243,7 +258,7 @@ replace en@(Edit ds newST) (RawEntry i@(TimeSpan s e) oldST:es)
       old = RawEntry (TimeSpan s (intervalStart ds)) oldST
       new = RawEntry (TimeSpan (intervalEnd ds) e) . statusToRawStatus <$> newST
     in
-      Just old : new : join (maybeToList (flip replace es <$> newEdit))
+      Just old : new : recc
   | otherwise =
     let
       new = RawEntry ds . statusToRawStatus <$> newST
@@ -258,15 +273,20 @@ replace en@(Edit ds newST) (RawEntry i@(TimeSpan s e) oldST:es)
     -- otherwise there would be no sane way to handle |---| \---|---|---/ |---|
     newSpan = guard (intervalStart ds > e) $> TimeSpan e (intervalStart ds)
     newEdit = flip Edit newST <$> newSpan
+    recc = maybe (Just <$> es) (`replace` es) newEdit
 
 (>*>) :: (Applicative f, Traversable t) => (a -> f b) -> t a -> f (t b)
 (>*>) = traverse
 
-serialize :: Storable a => Ptr a -> [a] -> IO ()
-serialize p xs = traverse_ serializeInd $ zip xs [0..]
+serialize :: forall a. (Show a, Storable a) => Ptr a -> [a] -> IO ()
+serialize p xs = do
+  traceShowM =<< readEs "logs/A"
+  traverse_ serializeInd $ zip xs [0..]
+  traceShowM =<< readEs "logs/A"
+  pure ()
   where
     serializeInd (x, i) =
-      pokeElemOff p i x
+      poke (p `plusPtr` (i * sizeOf x)) x
 
 memcpy :: forall p a. Storable a => p a -> Ptr a -> SizedPtr a -> IO ()
 memcpy _ tgt (SizedPtr s src) = go 0 where
@@ -277,63 +297,107 @@ memcpy _ tgt (SizedPtr s src) = go 0 where
 
 consLog :: Edit -> FilePath -> IO ()
 consLog ed@(Edit ds _) logPath = do
+  traceShowM "consLog"
   logSizeOff <- fileSize logPath
   let logSizeBytes = fromIntegral logSizeOff
   let contpareEntry k = contpareTimeSpans k . _entryToTimeSpan
-  let insertPainless fp = maybe (pure ()) (poke (castPtr fp)) (editToEntry ed)
+  let insertPainless fp = traceM "insertPainless" *> maybe (pure ()) (poke (castPtr fp)) (editToEntry ed)
   -- either a) we insert an entry which doesn't conflict (one extra entry)
   -- or b) we insert an entry in the interior of another (two extra entries)
   let maxLogSize = logSizeBytes + 2 * entrySize
   -- length news >= length olds precondition
-  let replaceAt (SizedPtr n p) olds news =
-        let
-          oldlen = length olds
-          reallyNew = news \\ olds
-          replaced = olds \\ news
-          diff = length reallyNew - length replaced
-          write (fp, _) =
-            let
-              toCopy = n - oldlen
-            in do
-              memcpy Proxy fp (SizedPtr toCopy (p `plusPtr` (oldlen * entrySize)))
-              serialize p news
-              memcpy Proxy (p `plusPtr` (length news * entrySize)) (SizedPtr toCopy fp)
-              pure $ n + diff
-        in
-          if diff == 0 then
-            -- we've got a straightforward overwrite
-            serialize p news $> n
-          else
-            MMap.mmapWithFilePtr (logPath ++ ".bak") MMap.ReadWriteEx (Just (0, n * entrySize + diff)) write
-  let m (fp, s) =
+  let
+    replaceAt :: SizedPtr RawEntry -> [RawEntry] -> [RawEntry] -> IO Int
+    replaceAt pt@(SizedPtr n p) olds news =
+      trace "replaceAt" $
+       let
+        -- this is totally screwed, isn't it?
+        oldlen = length olds
+        newlen = length news
+        toCopy = n - oldlen
+        write (fp, _) =
+          let
+          in do
+            traceShowM pt
+            traceShowM olds
+            traceShowM news
+            traceShowM "copying to"
+            traceShowM toCopy
+            traceShowM (SizedPtr toCopy (p `plusPtr` (oldlen * entrySize)))
+            traceShowM =<< readEs logPath
+            memcpy (Proxy :: Proxy RawEntry) (castPtr fp) (SizedPtr toCopy (p `plusPtr` (oldlen * entrySize)))
+            traceShowM =<< readEs logPath
+            traceShowM "inserting"
+            -- print news
+            serialize p news
+            traceShowM =<< readEs logPath
+            traceShowM "copying fro"
+            memcpy (Proxy :: Proxy RawEntry) (p `plusPtr` (newlen * entrySize)) (SizedPtr toCopy (castPtr fp))
+            traceShowM =<< readEs logPath
+            -- print =<< peek fp
+            pure $ n - oldlen + newlen
+      in
+        if oldlen == newlen then do
+          -- we've got a straightforward overwrite
+          traceShowM "replacing"
+          traceShowM news
+          traceShowM =<< readEs logPath
+          serialize p news $> n
+          traceShowM =<< readEs logPath
+          return n
+        else do
+          traceShowM "mmaping"
+          MMap.mmapWithFilePtr (logPath ++ ".bak") MMap.ReadWriteEx (Just (0, toCopy * entrySize)) write
+  let m (fp, _) =
+        traceShow fp $
         if
           logSizeBytes == 0
         then
           insertPainless fp $> entrySize
         else
           do
-            place <- binSearchInsertionPoint contpareEntry ds (SizedPtr ((s - 1) `div` entrySize) (castPtr fp))
-            case place of
-              InsertAtPtr placePtr -> do
-                let endPtr = fp `plusPtr` (logSizeBytes - entrySize)
-                end <- peek endPtr :: IO RawEntry
-                let remaining = ((endPtr `plusPtr` entrySize) `minusPtr` placePtr) `div` entrySize
-                if intervalStart ds > entryEnd end
-                  then do
-                    insertPainless (fp `plusPtr` logSizeBytes)
-                    pure $ logSizeBytes + entrySize
-                  else
-                    case editToEntry ed of
-                      Nothing -> pure logSizeBytes
-                      Just e -> replaceAt (SizedPtr remaining placePtr) [] [e] $> logSizeBytes + entrySize
+            let endPtr = fp `plusPtr` (logSizeBytes - entrySize)
+            end <- peek endPtr :: IO RawEntry
+            if intervalStart ds >= entryEnd end
+            then insertPainless (fp `plusPtr` logSizeBytes) $> logSizeBytes + entrySize
+            else do
+              let searchTarget = SizedPtr (logSizeBytes `div` entrySize) (castPtr fp)
+              place <- binSearchInsertionPoint contpareEntry ds searchTarget
+              case place of
+                InsertAtPtr placePtr -> do
+                  -- why am I trying to insert past the end?
+                  let remaining = (endPtr `minusPtr` placePtr) `div` entrySize + 1
+                  case editToEntry ed of
+                    Nothing -> pure logSizeBytes
+                    Just e ->  replaceAt (SizedPtr remaining placePtr) [] [e] $> logSizeBytes + entrySize
 
-              ConflictsWith ptrs -> do
-                conflicts <- NonEmpty.toList <$> peek >*> ptrs
-                let news = traceShowId $ joinRedundant $ traceShowId $ replace ed conflicts >>= maybeToList
-                let ptr = NonEmpty.head ptrs
-                let startSz = ptr `minusPtr` fp
-                let endSz = (logSizeBytes - startSz) `div` entrySize
-                (startSz +) . (entrySize *) <$> replaceAt (SizedPtr endSz ptr) conflicts news
+                ConflictsWith ptrs -> do
+                  traceShowM "ConflictsWith"
+                  traceShowM ptrs
+                  conflicts <- NonEmpty.toList <$> peek >*> ptrs
+                  let news = joinRedundant $ replace ed conflicts >>= maybeToList
+                  traceM "news"
+                  let ptr = NonEmpty.head ptrs
+                  let startSz = ptr `minusPtr` fp
+                  let endSz = (logSizeBytes - startSz) `div` entrySize
+                  (startSz +) . (entrySize *) <$> replaceAt (SizedPtr endSz ptr) conflicts news
+  traceM "\n"
+  traceShowM =<< readEs logPath
   sz <- MMap.mmapWithFilePtr logPath MMap.ReadWriteEx (Just (0,maxLogSize)) m
+  traceM "\n"
+  traceShowM =<< readEs logPath
+  traceM "\n"
   PF.setFileSize logPath (fromIntegral sz)
 
+readS :: forall a. Storable a => FilePath -> IO [a]
+readS fp =
+  MMap.mmapWithFilePtr fp MMap.ReadOnly Nothing (\(p, s) -> print s *> readP (castPtr p) (s - 1))
+
+readP :: forall a. Storable a => Ptr a -> Int -> IO [a]
+readP ptr s =
+  if s <= 0 then pure [] else NonEmpty.toList <$> traverse peek (allPtrs ptr s)
+
+readEs :: FilePath -> IO [RawEntry]
+readEs = readS
+
+readEsD = ((=<<) putStrLn) . fmap (unlines . fmap show) . readEs

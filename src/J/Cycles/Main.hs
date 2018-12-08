@@ -1,10 +1,9 @@
 {-# language BangPatterns #-}
 {-# language ExplicitForAll #-}
 {-# language FlexibleContexts #-}
-{-# language LambdaCase #-}
 {-# language NoMonomorphismRestriction #-}
 {-# language PatternSynonyms #-}
-{-# language TupleSections #-}
+{-# language MultiWayIf #-}
 {-# language ViewPatterns #-}
 
 module J.Cycles.Main (brickMain) where
@@ -40,23 +39,23 @@ import qualified Graphics.Vty as Vty
 import qualified System.Directory as D
 import qualified System.FilePath.Posix as FP
 
-singletonNE :: a -> NonEmpty a
-singletonNE = flip (:|) []
+nes :: a -> NonEmpty a
+nes = flip (:|) []
 
 sequenceE :: forall a e. [Either e a] -> Either (NonEmpty e) [a]
 sequenceE ne = bimap NonEmpty.reverse reverse $ go (Right []) ne where
   go :: Either (NonEmpty e) [a] -> [Either e a] -> Either (NonEmpty e) [a]
   go acc [] = acc
-  go acc ((Right a):xs) =
+  go acc (Right a:xs) =
     let
       !newAcc = fmap ((:) a) acc
     in
       go newAcc xs
-  go acc ((Left e):xs) =
+  go acc (Left e:xs) =
     let
       !newAcc = case acc of
-        Left es -> Left (e:|(NonEmpty.toList es))
-        Right _ -> Left (singletonNE e)
+        Left es -> Left (e:|NonEmpty.toList es)
+        Right _ -> Left (nes e)
     in
       go newAcc xs
 
@@ -72,14 +71,14 @@ fillInGaps (ds1@(DatedStatus (TimeSpan _ e) _):|ds2@(DatedStatus (TimeSpan s _) 
     let
       intervening = TimeSpan e s
     in
-      ds1:|((DatedStatus intervening UnknownM):(NonEmpty.toList $ fillInGaps (ds2:|xs)))
-fillInGaps (d:|(x:xs)) = d :| (NonEmpty.toList (fillInGaps (x:|xs)))
+      ds1:|DatedStatus intervening UnknownM:NonEmpty.toList (fillInGaps (ds2:|xs))
+fillInGaps (d:|(x:xs)) = d :| NonEmpty.toList (fillInGaps (x:|xs))
 fillInGaps (d:|[]) = d:|[]
 
 -- also likely generalizable to any intervals
 fitClip :: TimeSpan -> [DatedStatus] -> NonEmpty DatedStatus
-fitClip i [] = singletonNE $ DatedStatus i UnknownM
-fitClip (TimeSpan sl el) ([ds@(DatedStatus (TimeSpan start end) st)]) =
+fitClip i [] = nes $ DatedStatus i UnknownM
+fitClip (TimeSpan sl el) [ds@(DatedStatus (TimeSpan start end) st)] =
   let
     elLeft = DatedStatus (TimeSpan sl start) UnknownM
     elRight = DatedStatus (TimeSpan end el) UnknownM
@@ -129,7 +128,33 @@ loadBetweenInterval ds filePath =
 buildMapA :: (Traversable t, Applicative f, Ord k) => (k -> f a) -> t k -> f (Map k a)
 buildMapA f = fmap (Map.fromList . toList) . traverse tupleAndRun
   where
-    tupleAndRun n = (,) n <$> (f n)
+    tupleAndRun n = (,) n <$> f n
+
+decompDatedStatus :: DatedStatus -> (TimeSpan, MetaStatus)
+decompDatedStatus (DatedStatus ts ms) = (ts, ms)
+
+checkIntegrity :: forall a b. Eq a => (b -> [(TimeSpan, a)]) -> b -> Either String b
+checkIntegrity f b@(f -> []) = Right b
+checkIntegrity f b@(f -> ((ts, st):es)) =
+  checkTimeSpan 1 ts *> go st (intervalEnd ts) (zip [2..] es)
+    where
+      go _ _ [] = Right b
+      go lastStatus lastEnd ((n,(ts, st)):es) = if
+        | intervalStart ts < lastEnd ->
+          err n $ "Entry starts before the previous one ends" ++ show ts
+        -- currently we don't plan to actively defragment
+        -- | st == lastStatus ->
+        --   err n "Entry has the same status as the last entry"
+        | otherwise ->
+          go st (intervalEnd ts) es
+
+      err n e = Left ("Error in entry " ++ show n ++ ": \n  " ++ e)
+
+      checkTimeSpan :: Int -> TimeSpan -> Either String ()
+      checkTimeSpan n ts@(TimeSpan s e) =
+        if e <= s
+        then err n $ "Entry starts before it ends: " ++ show ts
+        else Right ()
 
 -- always loads *all* at once
 loadToState ::
@@ -140,33 +165,30 @@ loadToState vc pvs = do
   let logFolderPath = _configLogPath vc
   logExists <- D.doesDirectoryExist logFolderPath
   if not logExists then
-    pure $ Left $ singletonNE LogFolderMissing
+    pure $ Left $ nes LogFolderMissing
   else do
     cycleNames <- filter (not . isSuffixOf ".bak") <$> D.listDirectory logFolderPath
     case cycleNames of
-      [] -> pure $ Left $ singletonNE LogFolderEmpty
+      [] -> pure $ Left $ nes LogFolderEmpty
       ns -> do
-        csv <- getCompose $ buildMapA (Compose . loadValidation) ns
+        csv <- getCompose $ buildMapA (Compose . fmap V.fromEither . loadAndCheck) ns
         return $ V.toEither $ fmap remakeViewerState csv
   where
     pcs = _partialCycleStates pvs
     ci = _partialInterval pvs
 
-    loadEither :: String -> IO (Either LogParsingError CycleState)
-    loadEither name =
+    loadAndCheck :: String -> IO (Either (NonEmpty LoadViewerStateError) CycleState)
+    loadAndCheck name =
       let
         existing = Map.lookup name pcs
         offset = maybe 0 _partialBoundOffset existing
         pendingEdits = maybe mempty _partialPendingEdits existing
         remakeCycleState = fmap (flip (CycleState offset) pendingEdits)
+        loadHistory = loadBetweenInterval (shiftIntervalRight offset ci) (_configLogPath vc FP.</> name)
+        fixupError v = (nes . ErrorsParsingState . nes) (name,v)
+        check = first (nes . LogIntegrityProblem) . checkIntegrity (NonEmpty.toList . fmap decompDatedStatus)
       in
-        remakeCycleState <$> loadBetweenInterval (shiftIntervalRight offset ci) (_configLogPath vc FP.</> name)
-
-    fixupError :: String -> LogParsingError -> NonEmpty LoadViewerStateError
-    fixupError k v = (singletonNE . ErrorsParsingState . singletonNE) (k,v)
-
-    loadValidation :: String -> IO (V.Validation (NonEmpty LoadViewerStateError) CycleState)
-    loadValidation k = V.fromEither . first (fixupError k) <$> loadEither k
+        remakeCycleState . (=<<) check . first fixupError <$> loadHistory
 
     -- when the currently selected cycle disappears from the filesystem, which do we select next?
     -- the one before it if any are; otherwise, the one on the top, if it exists.
@@ -181,7 +203,7 @@ loadToState vc pvs = do
         Nothing ->
           defaultName
       where
-        defaultName = fmap (fst . fst) $ Map.minViewWithKey cs
+        defaultName = fst . fst <$> Map.minViewWithKey cs
 
     remakeViewerState :: Map String CycleState -> ViewerState
     remakeViewerState cs = ViewerState {

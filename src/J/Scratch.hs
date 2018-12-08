@@ -87,7 +87,7 @@ we1 = RawEntry (TimeSpan (read "2001-01-05") (read "2001-01-06")) Y
 we2 = RawEntry (TimeSpan (read "2001-01-01") (read "2001-01-02")) Y
 we3 = RawEntry (TimeSpan (read "2001-01-03") (read "2001-01-04")) Y
 
-makeFile n = openFile n ReadWriteMode >>= hClose
+makeFile n = openFile n ReadWriteMode
 
 setupScratchLog logPath = do
   fuckit (D.removeDirectoryRecursive logPath)
@@ -97,7 +97,7 @@ setupScratchLog logPath = do
 
 -- es2 = readEs "entries"
 
-scratch d = unsafePerformIO $ do
+scratch d = unsafePerformIO $
   searchForDays d "entries" >>= print
 
 scratchI t = unsafePerformIO $ do
@@ -106,9 +106,21 @@ scratchI t = unsafePerformIO $ do
 
 -- l = length es * entrySize
 
-writeEs :: forall a. Storable a => FilePath -> [a] -> IO ()
+ts s e = TimeSpan (read s) (read e)
+
+testEdits =
+  [ Edit (ts "2018-11-21" "2018-11-22") (Just On)
+  , Edit (ts "2018-11-24" "2018-11-25") (Just On)
+  , Edit (ts "2018-11-22" "2018-11-23") (Just On)
+  ]
+
+runIt = do
+  writeEs "logs/A" ([] :: [RawEntry])
+  traverse (flip consLog "logs/A") testEdits
+
+writeEs :: forall a. (Show a, Storable a) => FilePath -> [a] -> IO ()
 writeEs fp as = do
-  let size = length as * (sizeOf (undefined :: a))
+  let size = length as * sizeOf (undefined :: a)
   PT.COff fileSize <- PF.fileSize <$> PF.getFileStatus fp
   let write = MMap.mmapWithFilePtr fp MMap.ReadWriteEx (Just (0,size)) (\(p, _) -> serialize (castPtr p) as)
   if size > fromIntegral fileSize then
@@ -116,16 +128,18 @@ writeEs fp as = do
   else
     D.removeFile fp *> write
 
-readS :: forall a. Storable a => FilePath -> IO [a]
-readS fp =
-  mmapWithFilePtr fp MMap.ReadOnly Nothing (\(p, s) -> readP (castPtr p) s)
+-- readS :: forall a. Storable a => FilePath -> IO [a]
+-- readS fp =
+--   mmapWithFilePtr fp MMap.ReadOnly Nothing (\(p, s) -> readP (castPtr p) s)
 
-readP :: forall a. Storable a => Ptr a -> Int -> IO [a]
-readP ptr s =
-  if s == 0 then pure [] else NonEmpty.toList <$> traverse peek (allPtrs ptr s)
+-- readP :: forall a. Storable a => Ptr a -> Int -> IO [a]
+-- readP ptr s =
+--   if s == 0 then pure [] else NonEmpty.toList <$> traverse peek (allPtrs ptr s)
 
-readEs :: FilePath -> IO [RawEntry]
-readEs = readS
+-- readEs :: FilePath -> IO [RawEntry]
+-- readEs = readS
+
+-- readEsD = ((=<<) putStrLn) . fmap (unlines . fmap show) . readEs
 
       -- consFiles a fpn ((n,k):fps) = MMap.mmapWithFile
       -- consFiles a fpn [] = MMap.mmapWithFile

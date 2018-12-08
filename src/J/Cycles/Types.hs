@@ -220,6 +220,7 @@ data LogParsingError
 data LoadViewerStateError
   = ErrorsParsingState !(NonEmpty (String, LogParsingError))
   | LogFolderEmpty
+  | LogIntegrityProblem String
   | LogFolderMissing deriving Show
 
 data RawStatus = Y | N | U !Char deriving (Eq, Show)
