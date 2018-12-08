@@ -4,32 +4,28 @@ module J.CLI(opts) where
 
 import Control.Applicative((<|>))
 import Data.Semigroup((<>))
-import qualified Options.Applicative as Options
+import qualified Options.Applicative as O
 
 import qualified J.Indexing.Main as Indexing
 
-refresh :: Options.Parser (IO ())
-refresh = Options.flag' Indexing.refreshIndex
-  (  Options.long "refresh"
-  <> Options.help "Refresh doc tags"
+refresh :: O.Parser (IO ())
+refresh = O.flag' Indexing.refreshIndex
+  (  O.long "refresh"
+  <> O.help "Refresh doc tags"
   )
 
-logPath :: Options.Parser FilePath
+logPath :: O.Parser FilePath
 logPath =
-  Options.strOption $ Options.long "cyclelog" <> Options.value "cyclelog"
+  O.strOption $ O.long "cyclelog" <> O.value "cyclelog"
 
-width :: Options.Parser Int
-width = Options.option Options.auto (Options.long "width" <> Options.value 7)
+width :: O.Parser Int
+width =
+  O.option O.auto (O.long "width" <> O.value 7)
 
--- preAuto :: Read a => (String -> String) -> Options.ReadM a
--- preAuto f = Options.eitherReader $ \arg -> case reads (f arg) of
---     [(r, "")] -> return r
---     _         -> Left $ "cannot parse value `" ++ arg ++ "'"
+opts :: O.ParserInfo (IO ())
+opts = O.info (cli O.<**> O.helper)
+  (  O.fullDesc
+  <> O.progDesc "J tool" )
 
-cli :: Options.Parser (IO ())
+cli :: O.Parser (IO ())
 cli = refresh
-
-opts :: Options.ParserInfo (IO ())
-opts = Options.info (cli Options.<**> Options.helper)
-  (  Options.fullDesc
-  <> Options.progDesc "J tool" )
