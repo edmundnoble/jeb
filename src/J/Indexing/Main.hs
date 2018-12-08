@@ -10,7 +10,6 @@ import Control.Monad(filterM, unless)
 import Data.Foldable(traverse_)
 import Data.Functor(void)
 import Data.List(isSuffixOf)
-import Data.List.NonEmpty(NonEmpty(..))
 import Data.Maybe(fromJust)
 import Data.Validation(validation)
 import System.Directory(
@@ -63,35 +62,39 @@ linkDocuments tagsFile docsFile tagMapFile = do
   createDirectoryIfMissing True tagsFile
   createDirectoryIfMissing True docsFile
 
-  let linkDocNamed n = linkDocument tagsFile docsFile . DocumentMetadata n
+  let linkDocNamed n =
+        linkDocument tagsFile docsFile . DocumentMetadata n
 
-  let linkOrPrintErrs (DocumentMetadata n v) = validation (printErrs (Just n)) (linkDocNamed n) v
+  let linkOrPrintErrs (DocumentMetadata n v) =
+        validation (printErrs (Just n) . NonEmpty.toList) (linkDocNamed n) v
 
   traverse_ linkOrPrintErrs ((fmap . fmap) getPrefixedTags namedDocs)
 
-printErrs :: Maybe String -> NonEmpty AnyErrors -> IO ()
+printErrs :: Maybe String -> [AnyErrors] -> IO ()
 printErrs n es = do
-  let AllErrors errorsReadingTagMap errorsReadingDocument errorsFindingTags errorsWritingTagLinks = collectErrors (NonEmpty.toList es)
-  unless (null errorsReadingTagMap) $ do
+  let
+    AllErrors readingTagMapErrs readingDocumentErrs findingTagsErrs writingTagLinksErrs =
+      collectErrors es
+  unless (null readingTagMapErrs) $ do
     putStrLn "Errors reading tag map:"
-    traverse_ printTagMapError errorsReadingTagMap
-  unless (null errorsReadingDocument) $ do
+    traverse_ printTagMapErr readingTagMapErrs
+  unless (null readingDocumentErrs) $ do
     putStrLn (
       "Errors reading document (" ++
       fromJust n ++
       "):")
-    traverse_ printDocumentError errorsReadingDocument
-  unless (null errorsFindingTags) $ do
+    traverse_ printDocumentErr readingDocumentErrs
+  unless (null findingTagsErrs) $ do
     putStrLn (
       "Errors finding tags in tagmap (" ++
       fromJust n ++
       "):")
-    traverse_ printFindingTagError errorsFindingTags
-  unless (null errorsWritingTagLinks) $ do
+    traverse_ printFindingTagErr findingTagsErrs
+  unless (null writingTagLinksErrs) $ do
     putStrLn "Errors writing symbolic links for tags:"
-    traverse_ printWritingTagLinkError errorsWritingTagLinks
+    traverse_ printWritingTagLinkErr writingTagLinksErrs
   where
-    printTagMapError a = case a of
+    printTagMapErr a = case a of
       InvalidIndentation (Position l) minIndent indent ->
         putStrLn $
           "  At line " ++
@@ -103,9 +106,9 @@ printErrs n es = do
           " which is not divisible by the minimum." ++
           "  I don't know what level of nesting that is."
     printDented = putStrLn . ("  " ++) . show
-    printDocumentError = printDented
-    printFindingTagError = printDented
-    printWritingTagLinkError = printDented
+    printDocumentErr = printDented
+    printFindingTagErr = printDented
+    printWritingTagLinkErr = printDented
 
 refreshIndex :: IO ()
 refreshIndex =

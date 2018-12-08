@@ -2,7 +2,6 @@
 
 module J.CLI(opts) where
 
-import Control.Applicative((<|>))
 import Data.Semigroup((<>))
 import qualified Options.Applicative as O
 
