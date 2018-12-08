@@ -16,10 +16,10 @@ journalRoot = O.strOption
   <> O.value "."
   )
 
-opts :: O.ParserInfo (IO ())
+opts :: O.ParserInfo (IO Bool)
 opts = O.info (cli O.<**> O.helper)
   (  O.fullDesc
   <> O.progDesc "J tool" )
 
-cli :: O.Parser (IO ())
+cli :: O.Parser (IO Bool)
 cli = Indexing.refreshIndex <$> journalRoot

@@ -6,19 +6,16 @@ import Prelude hiding ((.), id)
 import Control.Category(Category(..))
 import Control.DeepSeq(force)
 import Control.Exception(SomeException, evaluate, try)
-import Control.Monad(filterM, unless)
-import Data.Foldable(traverse_)
-import Data.Functor(void)
+import Control.Monad(filterM, guard, unless)
+import Data.Foldable(toList, traverse_)
+import Data.Functor(($>), void)
 import Data.List(isSuffixOf)
 import Data.Maybe(fromJust)
-import Data.Validation(validation)
-import System.Directory(
-  createDirectoryIfMissing, doesFileExist, listDirectory,
-  makeAbsolute, removeDirectoryRecursive)
 import System.FilePath((</>))
 import System.Posix.Files(createSymbolicLink)
 
-import qualified Data.List.NonEmpty as NonEmpty
+import qualified System.Directory as Dir
+import qualified Data.Validation as Validation
 
 import J.Indexing.Types
 import J.Indexing.Streengs
@@ -29,12 +26,12 @@ catchSyncErrors io =
 
 isValidDocFileName :: FilePath -> IO Bool
 isValidDocFileName fp =
-  (".md" `isSuffixOf` fp &&) <$> doesFileExist fp
+  (".md" `isSuffixOf` fp &&) <$> Dir.doesFileExist fp
 
 linkTag :: FilePath -> FilePath -> String -> PrefixedTag -> IO ()
 linkTag tagsFile docFile name (PrefixedTag tag) = do
-  absoluteTagFile <- makeAbsolute $ foldl (</>) tagsFile (reverse tag)
-  let makeDirs = createDirectoryIfMissing True absoluteTagFile
+  absoluteTagFile <- Dir.makeAbsolute $ foldl (</>) tagsFile (reverse tag)
+  let makeDirs = Dir.createDirectoryIfMissing True absoluteTagFile
   let makeSymLink = (catchSyncErrors . createSymbolicLink docFile) (absoluteTagFile </> name)
   makeDirs *> makeSymLink
 
@@ -44,29 +41,29 @@ linkDocument ::
   DocumentMetadata String [PrefixedTag] ->
   IO ()
 linkDocument tagsFile docsFile (DocumentMetadata name ts) = do
-  docFile <- makeAbsolute $ docsFile </> name
+  docFile <- Dir.makeAbsolute $ docsFile </> name
   traverse_ (linkTag tagsFile docFile name) ts
 
 linkDocuments :: FilePath -> FilePath -> FilePath -> IO ()
 linkDocuments tagsFile docsFile tagMapFile = do
   tagMap <- readBulletedTagMap . lines <$> readFile tagMapFile
   _ <- evaluate (force tagMap)
-  docFiles <- listDirectory docsFile >>= filterM isValidDocFileName
+  docFiles <- Dir.listDirectory docsFile >>= filterM isValidDocFileName
   let readDoc n = fmap (DocumentMetadata n) (readFile (docsFile </> n))
   let getPrefixedTags t = readPrefixedTags t tagMap
 
   namedDocs <- traverse readDoc docFiles
   _ <- evaluate (force namedDocs)
 
-  catchSyncErrors (removeDirectoryRecursive tagsFile)
-  createDirectoryIfMissing True tagsFile
-  createDirectoryIfMissing True docsFile
+  catchSyncErrors (Dir.removeDirectoryRecursive tagsFile)
+  Dir.createDirectoryIfMissing True tagsFile
+  Dir.createDirectoryIfMissing True docsFile
 
   let linkDocNamed n =
         linkDocument tagsFile docsFile . DocumentMetadata n
 
   let linkOrPrintErrs (DocumentMetadata n v) =
-        validation (printErrs (Just n) . NonEmpty.toList) (linkDocNamed n) v
+        Validation.validation (printErrs (Just n) . toList) (linkDocNamed n) v
 
   traverse_ linkOrPrintErrs ((fmap . fmap) getPrefixedTags namedDocs)
 
@@ -110,7 +107,20 @@ printErrs n es = do
     printFindingTagErr = printDented
     printWritingTagLinkErr = printDented
 
-refreshIndex :: FilePath -> IO ()
-refreshIndex journalRoot =
-  let inRoot = (</>) journalRoot in
-  linkDocuments (inRoot "tags") (inRoot "docs") (inRoot "tagmap")
+refreshIndex :: FilePath -> IO Bool
+refreshIndex journalRoot = do
+  let inRoot = (</>) journalRoot
+  let tagsFolder = inRoot "tags"
+  let docsFolder = inRoot "docs"
+  let tagMapFile = inRoot "tagmap"
+  let orErr e = ($> e) . guard . not
+  invalidJournalErr <-
+    (orErr "Tags folder doesn't exist!" <$> Dir.doesDirectoryExist tagsFolder) <>
+    (orErr "Docs folder doesn't exist!" <$> Dir.doesDirectoryExist docsFolder) <>
+    (orErr "Tag map doesn't exist!"     <$> Dir.doesFileExist tagMapFile)
+  case invalidJournalErr of
+    [] ->
+      linkDocuments tagsFolder docsFolder tagMapFile
+    es ->
+      traverse_ putStrLn es
+  return $ null invalidJournalErr

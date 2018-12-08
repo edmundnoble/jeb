@@ -16,12 +16,9 @@ import qualified Data.Validation as Validation
 
 import J.Indexing.Types
 
-bind :: Monad m => (a -> m b) -> m a -> m b
-bind = (=<<)
-
-isPreamble :: String -> Bool
-isPreamble =
-  ((||) <$> (isPrefixOf "tag") <*> (isPrefixOf "Tag"))
+isTagHeader :: String -> Bool
+isTagHeader =
+  (||) <$> ("tag" `isPrefixOf`) <*> ("Tag" `isPrefixOf`)
 
 isBulletLine :: String -> Bool
 isBulletLine = isPrefixOf "*"
@@ -30,15 +27,15 @@ isBulletLine = isPrefixOf "*"
 isEmptyLine :: String -> Bool
 isEmptyLine = all isSpace
 
-removePreamble :: [Located String] -> Maybe (Located [Located String])
-removePreamble = dropEmpties . takeAfter isPreamble
+removeTagHeader :: [Located String] -> Maybe (Located [Located String])
+removeTagHeader = dropEmpties . takeAfter isTagHeader
   where
     dropEmpties = (fmap . fmap) $ dropWhile (isEmptyLine . _anywhere)
 
 linesWithTags :: [Located String] -> Maybe (Located [Located String])
 linesWithTags ls =
-  let trimmedWithNoPreamble = removePreamble $ (fmap . fmap) trimStart ls in
-    (fmap . fmap) (takeWhile (isBulletLine . foldOf anywhere)) trimmedWithNoPreamble
+  let trimmedWithNoTagHeader = removeTagHeader $ (fmap . fmap) trimStart ls in
+    (fmap . fmap) (takeWhile (isBulletLine . foldOf anywhere)) trimmedWithNoTagHeader
 
 readPrefixedTags ::
   (AsErrorReadingDocument e, AsErrorFindingTag e) =>
@@ -63,7 +60,7 @@ readUnprefixedTags doc =
       Just (Located p xsm) ->
         case xsm of
           [] -> errNE $ review _EmptyTagSection p
-          _ -> (bind _anywhere) <$>
+          _ -> (_anywhere =<<) <$>
             traverse (leftMap (singletonNE . review _TagsFailedToParse)) xsm
 
 errNE :: e -> Validation (NonEmpty e) a
@@ -99,9 +96,6 @@ parseTagValidated l@(Located p a) =
 leftMap :: (e -> e') -> Validation e a -> Validation e' a
 leftMap f (Failure e) = Failure (f e)
 leftMap _ (Success a) = Success a
-
-leftMapNel :: (e -> e') -> Validation (NonEmpty e) a -> Validation (NonEmpty e') a
-leftMapNel f = leftMap (fmap f)
 
 -- Since the TagMap only contains scoping information,
 -- we need to join the original tag onto the end.
