@@ -110,6 +110,7 @@ printErrs n es = do
     printFindingTagErr = printDented
     printWritingTagLinkErr = printDented
 
-refreshIndex :: IO ()
-refreshIndex =
-  linkDocuments "tags" "docs" "tagmap"
+refreshIndex :: FilePath -> IO ()
+refreshIndex journalRoot =
+  let inRoot = (</>) journalRoot in
+  linkDocuments (inRoot "tags") (inRoot "docs") (inRoot "tagmap")
