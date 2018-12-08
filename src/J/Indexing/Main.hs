@@ -4,7 +4,7 @@ module J.Indexing.Main(refreshIndex) where
 
 import Prelude hiding ((.), id)
 import Control.Category(Category(..))
-import Control.DeepSeq
+import Control.DeepSeq(force)
 import Control.Exception(SomeException, evaluate, try)
 import Control.Monad(filterM, unless)
 import Data.Foldable(traverse_)
@@ -29,8 +29,8 @@ catchSyncErrors io =
   void (try io :: IO (Either SomeException ()))
 
 isValidDocFileName :: FilePath -> IO Bool
-isValidDocFileName d =
-  (||) <$> pure (isSuffixOf ".md" d) <*> doesFileExist d
+isValidDocFileName fp =
+  (".md" `isSuffixOf` fp &&) <$> doesFileExist fp
 
 linkTag :: FilePath -> FilePath -> String -> PrefixedTag -> IO ()
 linkTag tagsFile docFile name (PrefixedTag tag) = do
@@ -39,18 +39,18 @@ linkTag tagsFile docFile name (PrefixedTag tag) = do
   let makeSymLink = (catchSyncErrors . createSymbolicLink docFile) (absoluteTagFile </> name)
   makeDirs *> makeSymLink
 
-linkTags :: FilePath -> FilePath -> String -> [PrefixedTag] -> IO ()
-linkTags =
-  ((traverse_ .) .) . linkTag
-
-linkDocument :: FilePath -> FilePath -> (DocumentMetadata String [PrefixedTag]) -> IO ()
+linkDocument ::
+  FilePath ->
+  FilePath ->
+  DocumentMetadata String [PrefixedTag] ->
+  IO ()
 linkDocument tagsFile docsFile (DocumentMetadata name ts) = do
   docFile <- makeAbsolute $ docsFile </> name
-  linkTags tagsFile docFile name ts
+  traverse_ (linkTag tagsFile docFile name) ts
 
 linkDocuments :: FilePath -> FilePath -> FilePath -> IO ()
 linkDocuments tagsFile docsFile tagMapFile = do
-  tagMap <- (readBulletedTagMap . lines) <$> readFile tagMapFile
+  tagMap <- readBulletedTagMap . lines <$> readFile tagMapFile
   _ <- evaluate (force tagMap)
   docFiles <- listDirectory docsFile >>= filterM isValidDocFileName
   let readDoc n = fmap (DocumentMetadata n) (readFile (docsFile </> n))
@@ -92,17 +92,17 @@ printErrs n es = do
     traverse_ printWritingTagLinkError errorsWritingTagLinks
   where
     printTagMapError a = case a of
-      InvalidIndentation (Position l) minIndent indent -> do
-        putStrLn (
+      InvalidIndentation (Position l) minIndent indent ->
+        putStrLn $
           "  At line " ++
           show l ++
           ", with minimum indentation at " ++
-          (show minIndent) ++
+          show minIndent ++
           ", the indentation was " ++
-          (show indent) ++
+          show indent ++
           " which is not divisible by the minimum." ++
-          "  I don't know what level of nesting that is.")
-    printDented = putStrLn . ((++) "  ") . show
+          "  I don't know what level of nesting that is."
+    printDented = putStrLn . ("  " ++) . show
     printDocumentError = printDented
     printFindingTagError = printDented
     printWritingTagLinkError = printDented

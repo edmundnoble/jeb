@@ -18,10 +18,6 @@ cabal-version:       >=2.00
 executable j
   main-is:             Main.hs
   hs-source-dirs:      .
-  other-modules:       J.Main, J.CLI
-                       , J.Logging
-                       , J.Indexing.Main, J.Indexing.Types
-                       , J.Indexing.Streengs
   ghc-options:         -Wall -threaded +RTS -N -RTS
   build-depends:       base >=4.10 && <4.12
                      , aeson
@@ -55,7 +51,7 @@ executable j
 library j-lib
   hs-source-dirs:      src
   ghc-options:         -Wall
-  exposed-modules:     J.Main, J.CLI
+  exposed-modules:     J.CLI
                      , J.Logging
                      , J.Indexing.Main, J.Indexing.Types
                      , J.Indexing.Streengs

@@ -14,14 +14,6 @@ refresh = O.flag' Indexing.refreshIndex
   <> O.help "Refresh doc tags"
   )
 
-logPath :: O.Parser FilePath
-logPath =
-  O.strOption $ O.long "cyclelog" <> O.value "cyclelog"
-
-width :: O.Parser Int
-width =
-  O.option O.auto (O.long "width" <> O.value 7)
-
 opts :: O.ParserInfo (IO ())
 opts = O.info (cli O.<**> O.helper)
   (  O.fullDesc
