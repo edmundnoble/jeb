@@ -1,4 +1,4 @@
-module J.Indexing.Streengs(readBulletedTagMap, readPrefixedTags) where
+module J.Indexing.Streengs where
 
 import Prelude hiding((.), id)
 
@@ -16,27 +16,90 @@ import qualified Data.Validation as Validation
 
 import J.Indexing.Types
 
+-- | Does a string start with "Tags"?
+--
+-- Examples:
+-- >>> (isTagHeader "Tags")
+-- True
+--
+-- >>> (isTagHeader "Tags:")
+-- True
+--
+-- >>> (isTagHeader "Tags: ")
+-- True
+--
+-- >>> (isTagHeader "tags:")
+-- False
+
 isTagHeader :: String -> Bool
-isTagHeader =
-  (||) <$> ("tag" `isPrefixOf`) <*> ("Tag" `isPrefixOf`)
+isTagHeader = ("Tags" `isPrefixOf`)
 
-isBulletLine :: String -> Bool
-isBulletLine = isPrefixOf "*"
+-- | Does a string start with "*"?
+--
+-- Examples:
+-- >>> isBulleted "*Tag"
+-- True
+--
+-- >>> isBulleted " *Tag"
+-- False
+--
 
-{-# inline isEmptyLine #-}
-isEmptyLine :: String -> Bool
-isEmptyLine = all isSpace
+isBulleted :: String -> Bool
+isBulleted = ("*" `isPrefixOf`)
+
+-- | Given the entire document, remove the `Tags` line and tell me where it is
+--
+-- Examples:
+-- >>> :{
+--   removeTagHeader [
+--     Located (Position 0) ""
+--   , Located (Position 1) "Tags"
+--   , Located (Position 2) "* Tag 1"
+--   , Located (Position 3) "* Tag 2"
+--   ]
+-- :}
+-- Just (Located {_location = Position 1, _anywhere = [Located {_location = Position 2, _anywhere = "* Tag 1"},Located {_location = Position 3, _anywhere = "* Tag 2"}]})
+--
+-- >>> :{
+--   removeTagHeader [Located (Position 0) "Hello world"]
+-- :}
+-- Nothing
 
 removeTagHeader :: [Located String] -> Maybe (Located [Located String])
 removeTagHeader = dropEmpties . takeAfter isTagHeader
   where
-    dropEmpties = (fmap . fmap) $ dropWhile (isEmptyLine . _anywhere)
+    dropEmpties = (fmap . fmap) $ dropWhile (all isSpace . _anywhere)
+
+-- | Given the entire document, extract every line has a tag on it
+--
+-- Examples:
+-- >>> :{
+--   linesWithTags [
+--     Located (Position 0) ""
+--   , Located (Position 1) "Tags"
+--   , Located (Position 2) "* Tag 1"
+--   , Located (Position 3) "* Tag 2"
+--   , Located (Position 4) ""
+--   ]
+-- :}
+-- Just (Located {_location = Position 1, _anywhere = [Located {_location = Position 2, _anywhere = "* Tag 1"},Located {_location = Position 3, _anywhere = "* Tag 2"}]})
+--
+-- >>> :{
+--   linesWithTags [Located (Position 0) "Hello world"]
+-- :}
+-- Nothing
 
 linesWithTags :: [Located String] -> Maybe (Located [Located String])
 linesWithTags ls =
   let trimmedWithNoTagHeader = removeTagHeader $ (fmap . fmap) trimStart ls in
-    (fmap . fmap) (takeWhile (isBulletLine . foldOf anywhere)) trimmedWithNoTagHeader
+    (fmap . fmap) (takeWhile (isBulleted . foldOf anywhere)) trimmedWithNoTagHeader
 
+-- | Given a tagged document and tagmap, associates all of the document's tags
+-- | with the path from each to the root of the tagmap.
+--
+-- Examples:
+-- >>> readPrefixedTags "" undefined :: Validation (NonEmpty AnyErrors) [PrefixedTag]
+-- Failure (AnyErrorReadingDocument NoTagSectionFound :| [])
 readPrefixedTags ::
   (AsErrorReadingDocument e, AsErrorFindingTag e) =>
   String -> TagMap -> Validation (NonEmpty e) [PrefixedTag]
@@ -44,8 +107,7 @@ readPrefixedTags doc tagMap =
   (Validation.fromEither . (=<<) Validation.toEither . Validation.toEither) $ prefixTags unPrefixedTags
   where
     unPrefixedTags = readUnprefixedTags (lines doc)
-    prefixTags = (fmap . traverse) (leftMap singletonNE . flip getTagPrefixOrError tagMap)
-
+    prefixTags = (fmap . traverse) (leftMap pure . flip getTagPrefixOrError tagMap)
 
 readUnprefixedTags ::
   AsErrorReadingDocument e =>
@@ -56,29 +118,24 @@ readUnprefixedTags doc =
   let validTags = (fmap . fmap . fmap) parseTagValidated tagLines in
     case validTags of
       Nothing ->
-        errNE $ review _NoTagSectionFound ()
+        Failure . pure $ review _NoTagSectionFound ()
       Just (Located p xsm) ->
         case xsm of
-          [] -> errNE $ review _EmptyTagSection p
+          [] -> Failure . pure $ review _EmptyTagSection p
           _ -> (_anywhere =<<) <$>
-            traverse (leftMap (singletonNE . review _TagsFailedToParse)) xsm
+            traverse (leftMap (pure . review _TagsFailedToParse)) xsm
 
-errNE :: e -> Validation (NonEmpty e) a
-errNE = Failure . singletonNE
-
-singletonNE :: e -> NonEmpty e
-singletonNE = flip (:|) []
-
+-- | Trims the beginning of a string, removing whitespace.
 trimStart :: String -> String
-trimStart s = dropWhile isSpace s
+trimStart = dropWhile isSpace
 
 takeAfter :: (a -> Bool) -> [Located a] -> Maybe (Located [Located a])
 takeAfter _ [] = Nothing
-takeAfter f ((Located (Position p) x):xs) | f x = Just (Located (Position p) xs)
+takeAfter f (Located (Position p) x:xs) | f x = Just (Located (Position p) xs)
 takeAfter f (_:xs) = takeAfter f xs
 
 zipWithIndex :: [a] -> [Located a]
-zipWithIndex xs = uncurry Located <$> (zip (Position <$> [0..]) xs)
+zipWithIndex xs = uncurry Located <$> zip (Position <$> [0..]) xs
 
 parseTag :: String -> Maybe [UnprefixedTag]
 parseTag l =

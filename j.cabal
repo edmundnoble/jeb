@@ -82,38 +82,3 @@ library j-lib
                      , validation
                      , vty
   default-language:    Haskell2010
-
-test-suite test-j
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        test.hs
-  build-depends:  j-lib
-                , base
-                , tasty
-                , tasty-hunit
-                , aeson
-                , ansi-terminal
-                , ansi-wl-pprint
-                , brick
-                , comonad
-                , contravariant
-                , containers
-                , deepseq
-                , directory
-                , filepath
-                , free
-                , ghc-prim
-                , IntervalMap
-                , lens
-                , mtl
-                , mmap
-                , optparse-applicative
-                , profunctors
-                , semigroups
-                , semigroupoids
-                , split
-                , time
-                , unix
-                , validation
-                , vty
-  default-language:    Haskell2010
