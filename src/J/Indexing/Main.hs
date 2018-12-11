@@ -74,8 +74,7 @@ linkDocuments linker tagsFolder docsFolder tagMapFile = do
         _ <- evaluate (force namedDocs)
         ignoreSyncErrors (Dir.removeDirectoryRecursive tagsFolder)
         Dir.createDirectoryIfMissing True tagsFolder
-        let linkOrPrintErrs n =
-                bimap (printErrs (Just n) . toList) (link linker n)
+        let linkOrPrintErrs n = bimap (printErrs (Just n) . toList) (link linker n)
         let tags = (fmap . fmap) getPrefixedTags namedDocs
         Validation.codiagonal $ foldMap (uncurry linkOrPrintErrs) tags
 
@@ -126,7 +125,7 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) = do
         let linker = fsLinker tagsFolder docsFolder
         let journalChecks =
                 [
-                Dir.doesDirectoryExist tagsFolder >>= printErr ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
+                        Dir.doesDirectoryExist tagsFolder >>= printErr ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
                 ,       Dir.doesDirectoryExist docsFolder >>= printErr ("Docs folder " ++ docsFolder ++ " doesn't exist!")
                 ,       Dir.doesFileExist tagMapFile >>= printErr ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
                 ]
