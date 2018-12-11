@@ -19,7 +19,7 @@ executable j
   main-is:             Main.hs
   hs-source-dirs:      .
   ghc-options:         -Wall -threaded +RTS -N -RTS
-  build-depends:       base >=4.10 && <4.12
+  build-depends:       base >=4.10 && <4.13
                      , aeson
                      , ansi-terminal
                      , ansi-wl-pprint
@@ -55,7 +55,7 @@ library j-lib
                      , J.Logging
                      , J.Indexing.Main, J.Indexing.Types
                      , J.Indexing.Streengs
-  build-depends:       base >=4.10 && <4.12
+  build-depends:       base >=4.10 && <4.13
                      , aeson
                      , ansi-terminal
                      , ansi-wl-pprint

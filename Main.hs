@@ -5,24 +5,26 @@ module Main where
 import Prelude
 
 import Control.Monad(join)
+import Control.Monad.Reader
+import Data.Functor(($>))
 import Options.Applicative(ParserResult(..), execParser, execParserPure)
 import Options.Applicative.Builder(defaultPrefs)
+import System.Environment(getArgs)
 
 import J.CLI
 
-mainCLI :: IO Bool
-mainCLI = join $ execParser opts
-
-mainManual :: [String] -> IO Bool
-mainManual args = case execParserPure defaultPrefs opts args of
-  Success c -> c
-  Failure f -> error ("error parsing arguments: \n" ++ show f)
-  CompletionInvoked _ -> error "completion invoked?"
-
-mainE :: Maybe [String] -> IO Bool
-mainE = maybe mainCLI mainManual
+mainA :: [String] -> IO Bool
+mainA args = case execParserPure defaultPrefs opts args of
+        Success c -> putStrLn "args parse!" *> c
+        Failure f -> error $
+                "error parsing arguments: \n" ++ show f
+        CompletionInvoked _ -> error
+                "completion invoked?"
 
 main :: IO ()
-main = mainE Nothing >>= putStrLn . \case
-  True -> "Done."
-  False -> "Errors occurred."
+main = do
+        args <- getArgs
+        print args
+        mainA args >>= putStrLn . \case
+                True -> "Done."
+                False -> "Errors occurred."
