@@ -123,17 +123,19 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) = do
         docsFolder <- inRoot "docs"
         tagMapFile <- inRoot "tagmap"
         let linker = fsLinker tagsFolder docsFolder
-        let journalChecks =
+        checkResults <- sequence $
                 [
-                        Dir.doesDirectoryExist tagsFolder >>= printErr ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
-                ,       Dir.doesDirectoryExist docsFolder >>= printErr ("Docs folder " ++ docsFolder ++ " doesn't exist!")
-                ,       Dir.doesFileExist tagMapFile >>= printErr ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
+                        Dir.doesDirectoryExist tagsFolder
+                                `orPrintErr` ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
+                ,       Dir.doesDirectoryExist docsFolder
+                                `orPrintErr` ("Docs folder " ++ docsFolder ++ " doesn't exist!")
+                ,       Dir.doesFileExist tagMapFile
+                                `orPrintErr` ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
                 ]
-        checkResults <- sequence journalChecks
         let sufficientDirectoryTree = and checkResults
         when sufficientDirectoryTree $
                 linkDocuments linker tagsFolder docsFolder tagMapFile
         return sufficientDirectoryTree
         where
         inRoot = Dir.makeAbsolute . (journalRoot </>)
-        printErr err b = unless b (putStrLn err) $> b
+        orPrintErr q err = q >>= \b -> unless b (putStrLn err) $> b
