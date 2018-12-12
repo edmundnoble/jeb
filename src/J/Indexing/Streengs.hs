@@ -8,10 +8,11 @@ import Data.Bifunctor(first)
 import Data.List(isPrefixOf)
 import Data.List.NonEmpty(NonEmpty(..))
 import Data.List.Split(splitWhen)
+import Data.Map.Strict(Map)
 import Data.Maybe(fromMaybe)
 import Data.Validation(Validation(..))
 
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 import qualified Data.Validation as Validation
 
 import J.Indexing.Types
@@ -184,13 +185,18 @@ readBulletedTagMap tagMapLines = go minIndent [] bulletLines [] Map.empty
                 go :: Int -> [String] -> [String] -> String -> TagMap -> TagMap
                 go lastIndent ss (l:ls) lastTag acc =
                         let indent = (length . takeWhile (== ' ')) l in
-                        let tag = dropWhile ((||) <$> (== ' ') <*> (== '*')) l in
-                        if (indent `mod` minIndent) /= 0 then
-                        error "please use proportional indenting"
-                        else if indent < lastIndent then
-                        go indent (tail ss) ls tag (Map.insertWith (++) tag (tail ss) acc)
-                        else if indent == lastIndent then
-                        go indent ss ls tag (Map.insertWith (++) tag ss acc)
-                        else
-                        go indent (lastTag:ss) ls tag (Map.insertWith (++) tag (lastTag:ss) acc)
+                        let indentSize = indent `div` minIndent in
+                        let tag = dropWhile (\c -> c == ' ' || c == '*') l in
+                        if (indent `mod` minIndent) /= 0
+                        then error "please use proportional indenting"
+                        -- this is obviously wrong; we need to drop `(indent `div` minIndent)`
+                        -- components on dedent, not just one
+                        else if indent < lastIndent
+                        then go indent (drop indentSize ss) ls tag (Map.insertWith (++) tag (tail ss) acc)
+                        else if indent == lastIndent
+                        then go indent ss ls tag (Map.insertWith (++) tag ss acc)
+                        else go indent (lastTag:ss) ls tag (Map.insertWith (++) tag (lastTag:ss) acc)
                 go _ _ [] _ acc = acc
+
+readTaggedDocs :: FilePath -> IO (Map FilePath [PrefixedTag])
+readTaggedDocs = undefined
