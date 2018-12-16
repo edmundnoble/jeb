@@ -1,3 +1,6 @@
+{-# language ViewPatterns #-}
+{-# language TupleSections #-}
+
 module J.Indexing.Streengs where
 
 import Prelude hiding((.), id)
@@ -5,15 +8,22 @@ import Prelude hiding((.), id)
 import Control.Category(Category(..))
 import Control.Lens hiding ((<|))
 import Data.Bifunctor(first)
-import Data.List(isPrefixOf)
+import Data.Foldable(traverse_)
+import Data.List(isPrefixOf, sort)
 import Data.List.NonEmpty(NonEmpty(..))
 import Data.List.Split(splitWhen)
 import Data.Map.Strict(Map)
 import Data.Maybe(fromMaybe)
+import Data.Tuple(swap)
 import Data.Validation(Validation(..))
+import System.Posix.Files(createSymbolicLink)
+import Text.PrettyPrint.ANSI.Leijen(Doc, Pretty(..), nest, text)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Validation as Validation
+import qualified System.Directory as Dir
+import qualified System.FilePath.Posix as FP
+import qualified System.IO.Unsafe as U
 
 import J.Indexing.Types
 
@@ -105,10 +115,10 @@ readPrefixedTags ::
         (AsErrorReadingDocument e, AsErrorFindingTag e) =>
         String -> TagMap -> Validation (NonEmpty e) [PrefixedTag]
 readPrefixedTags doc tagMap =
-        (Validation.fromEither . (=<<) Validation.toEither . Validation.toEither) $ prefixTags unPrefixedTags
+        Validation.bindValidation ((fmap . traverse) (first pure . prefixTags) unPrefixedTags) id
         where
                 unPrefixedTags = readUnprefixedTags (lines doc)
-                prefixTags = (fmap . traverse) (first pure . flip getTagPrefixOrError tagMap)
+                prefixTags = flip getTagPrefixOrError tagMap
 
 readUnprefixedTags ::
         AsErrorReadingDocument e =>
@@ -127,10 +137,10 @@ readUnprefixedTags doc =
                                         traverse (first (pure . review _TagsFailedToParse)) xsm
 
 -- | Trims the beginning of a string, removing whitespace.
+-- | Only spaces are treated as whitespace deliberately.
 trimStart :: String -> String
 trimStart = dropWhile (== ' ')
 
--- |
 takeAfter :: (a -> Bool) -> [Located a] -> Maybe (Located [Located a])
 takeAfter _ [] = Nothing
 takeAfter f (Located (Position p) x:xs) | f x = Just (Located (Position p) xs)
@@ -148,12 +158,14 @@ parseTag l =
                 else
                         Nothing
 
-parseTagValidated :: Located String -> Validation (Located String) (Located [UnprefixedTag])
+parseTagValidated ::
+        Located String ->
+        Validation (Located String) (Located [UnprefixedTag])
 parseTagValidated l@(Located p a) =
         maybe (Failure l) (Success . Located p) (parseTag a)
 
 -- Since the TagMap only contains scoping information,
--- we need to join the original tag onto the end.
+-- we need to join the original tag onto the start.
 getTagPrefix :: UnprefixedTag -> TagMap -> Maybe PrefixedTag
 getTagPrefix (UnprefixedTag t) = fmap (PrefixedTag . (:) t) . Map.lookup t
 
@@ -173,30 +185,97 @@ minimumIndent =
                 nonZero n = Just n
                 firstNonZero a b = if a == 0 then b else a
 
--- TODO: add Validation, proper error for unproportional indenting
+-- | Reads a TagMap out of a list of lines.
+--
+-- Examples:
+-- >>> :{
+-- sort $ fmap swap $ Map.toList $ readBulletedTagMap
+--      [
+--      "Tags:",
+--      "  * One tag",
+--      "    * One tag in one tag",
+--      "      * One tag in one tag in one tag",
+--      "    * Two tag in one tag",
+--      "      * One tag in two tag in one tag",
+--      "  * Two tag"
+--      ]
+-- :}
+-- [([],"One tag"),([],"Two tag"),(["One tag"],"One tag in one tag"),(["One tag"],"Two tag in one tag"),(["One tag in one tag","One tag"],"One tag in one tag in one tag"),(["Two tag in one tag","One tag"],"One tag in two tag in one tag")]
+--
+-- >>> readBulletedTagMap []
+-- fromList []
 readBulletedTagMap :: [String] -> TagMap
 readBulletedTagMap [] = mempty
-readBulletedTagMap tagMapLines = go minIndent [] bulletLines [] Map.empty
+readBulletedTagMap tagMapLines =
+        -- TODO: add Validation, proper error for unproportional indenting
+        go [] $ indentForwardDifferences $ separateIndents <$> bulletLines
         where
-                bulletLines = filter (isPrefixOf "*" . trimStart) tagMapLines
+        bulletLines = filter (isPrefixOf "*" . trimStart) tagMapLines
 
-                minIndent = fromMaybe 2 $ minimumIndent bulletLines
+        minIndent = fromMaybe 2 $ minimumIndent bulletLines
 
-                go :: Int -> [String] -> [String] -> String -> TagMap -> TagMap
-                go lastIndent ss (l:ls) lastTag acc =
-                        let indent = (length . takeWhile (== ' ')) l in
-                        let indentSize = indent `div` minIndent in
-                        let tag = dropWhile (\c -> c == ' ' || c == '*') l in
-                        if (indent `mod` minIndent) /= 0
-                        then error "please use proportional indenting"
-                        -- this is obviously wrong; we need to drop `(indent `div` minIndent)`
-                        -- components on dedent, not just one
-                        else if indent < lastIndent
-                        then go indent (drop indentSize ss) ls tag (Map.insertWith (++) tag (tail ss) acc)
-                        else if indent == lastIndent
-                        then go indent ss ls tag (Map.insertWith (++) tag ss acc)
-                        else go indent (lastTag:ss) ls tag (Map.insertWith (++) tag (lastTag:ss) acc)
-                go _ _ [] _ acc = acc
+        countIndents = (`div` minIndent)
 
-readTaggedDocs :: FilePath -> IO (Map FilePath [PrefixedTag])
-readTaggedDocs = undefined
+        -- first, count the number of spaces in each indent,
+        -- and extract the name of the tag.
+        separateIndents :: String -> (Int, String)
+        separateIndents l =
+                let indent = (length . takeWhile (== ' ')) l in
+                let tag = dropWhile (\c -> c == ' ' || c == '*') l in
+                (indent, tag)
+
+        -- then, calculate the forward differences of the sizes
+        -- of the indents.
+        indentForwardDifferences :: [(Int, a)] -> [(Int, a)]
+        indentForwardDifferences = reverse . go 0 . reverse where
+                go l ((x,y):xs) =
+                        ((,y) $! (l-x)):(go x xs)
+                go _ [] = []
+
+        go :: [String] -> [(Int, String)] -> TagMap
+        go ss ((x, y):xs) =
+                let nextDelta = x `div` minIndent in
+                let insertNew = Map.insert y ss in
+                insertNew $
+                        if nextDelta <= 0
+                        then
+                                go (drop (-nextDelta) ss) xs
+                        else
+                                go (y:ss) xs
+        go _ [] = Map.empty
+
+-- | Read the document filesystem from disk.
+readTagFS :: FilePath -> IO TagFS
+readTagFS path = do
+        let baseName = FP.takeBaseName path
+        isDir <- Dir.doesDirectoryExist path
+        if isDir
+        then do
+                contents <- Dir.listDirectory path
+                let absolutize = (path FP.</>)
+                let readSubdirFS n =
+                        U.unsafeInterleaveIO (readTagFS (absolutize n))
+                recFss <- traverse readSubdirFS contents
+                return $ TagDir baseName recFss
+        else return $ DocFile baseName
+
+-- | Write the document filesystem from disk.
+writeTagFS :: FilePath -> FilePath -> TagFS -> IO ()
+writeTagFS tagsPath docsPath (TagDir n fs) =
+        traverse_ (writeTagFS (tagsPath FP.</> n) docsPath) fs
+writeTagFS tagsPath docsPath (DocFile name) = do
+        let symLinkPath = tagsPath FP.</> name
+        let docFile = docsPath FP.</> name
+        createSymbolicLink docFile tagsPath
+
+-- | Converts a tag filesystem into a listing of its contents recursively,
+-- | pairing filenames to full tag paths.
+tagFSToDocMap :: TagFS -> Map String [PrefixedTag]
+tagFSToDocMap = go []
+        where
+        go :: [String] -> TagFS -> Map String [PrefixedTag]
+        go ss (DocFile n) = Map.singleton n [PrefixedTag ss]
+        go ss (TagDir n cs) =
+                Map.unionsWith (++) (go (n:ss) <$> cs )
+
+-- docMapToTagFS :: Map String [PrefixedTag] -> TagFS

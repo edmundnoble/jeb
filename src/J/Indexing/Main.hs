@@ -1,8 +1,8 @@
-{-# language NoMonomorphismRestriction #-}
 {-# language DeriveFunctor #-}
 {-# language DerivingVia #-}
 {-# language DerivingStrategies #-}
 {-# language GeneralizedNewtypeDeriving #-}
+{-# language NoMonomorphismRestriction #-}
 {-# language RoleAnnotations #-}
 {-# language LambdaCase #-}
 {-# language ViewPatterns #-}
@@ -19,12 +19,15 @@ import Data.Bifunctor(bimap)
 import Data.Coerce
 import Data.Foldable(foldl', toList, traverse_)
 import Data.Functor(($>), void)
-import Data.List(isSuffixOf)
+import Data.Functor.Identity(Identity(..))
+import Data.List(intercalate, isSuffixOf)
 import Data.Maybe(fromJust)
+import Data.Map.Lazy(Map)
 import System.FilePath((</>))
 import System.Posix.Files(createSymbolicLink)
 
 import qualified System.Directory as Dir
+import qualified Data.Map.Lazy as Map
 import qualified Data.Validation as Validation
 
 import qualified J.Indexing.Types as Types
@@ -34,31 +37,22 @@ ignoreSyncErrors :: IO () -> IO ()
 ignoreSyncErrors io = void (try io :: IO (Either SomeException ()))
 
 isValidDocFileName :: FilePath -> Bool
-isValidDocFileName fp =
-        ".md" `isSuffixOf` fp
+isValidDocFileName =
+        (".md" `isSuffixOf`)
 
-type role Linker representational
-newtype Linker a = Linker (String -> [Types.PrefixedTag] -> a)
-        deriving (Functor, Applicative, Monad)
-                via (ReaderT String ((->) [Types.PrefixedTag]))
-
-link :: Linker a -> String -> [Types.PrefixedTag] -> a
-link = coerce
-
-fsLinker :: FilePath -> FilePath -> Linker (IO ())
-fsLinker tagsFolder docsFolder = Linker linkDoc
+-- | Mirrors a TagFS onto a real filesystem in `tagsFolder`,
+fsLinker :: FilePath -> FilePath -> Types.Linker (IO ())
+fsLinker tagsFolder docsFolder = Types.Linker fsLink
         where
-        linkDoc name = traverse_ (linkTag name)
-        linkTag name (Types.PrefixedTag tag) = do
-                absoluteTagFolder <-
-                        Dir.makeAbsolute $ foldl' (</>) tagsFolder (reverse tag)
-                Dir.createDirectoryIfMissing True absoluteTagFolder
-                docFile <- Dir.makeAbsolute $ docsFolder </> name
-                let symLinkPath = absoluteTagFolder </> name
-                ignoreSyncErrors $ createSymbolicLink docFile symLinkPath
+        fsLink fs = do
+                ignoreSyncErrors (Dir.removeDirectoryRecursive tagsFolder)
+                Dir.createDirectoryIfMissing False tagsFolder
+                Streengs.writeTagFS tagsFolder docsFolder fs
 
+-- | Given a linker in IO, create links for all of the documents in `docsFolder`,
+-- | inside of `tagsFolder`, using `tagMapFile` as a reference for tag prefixes.
 linkDocuments ::
-        Linker (IO ()) ->
+        Types.Linker (IO ()) ->
         FilePath ->
         FilePath ->
         FilePath ->
@@ -74,9 +68,10 @@ linkDocuments linker tagsFolder docsFolder tagMapFile = do
         _ <- evaluate (force namedDocs)
         ignoreSyncErrors (Dir.removeDirectoryRecursive tagsFolder)
         Dir.createDirectoryIfMissing True tagsFolder
-        let linkOrPrintErrs n = bimap (printErrs (Just n) . toList) (link linker n)
+        -- let linkOrPrintErrs n = bimap (printErrs (Just n) . toList) (Types.link linker n)
         let tags = (fmap . fmap) getPrefixedTags namedDocs
-        Validation.codiagonal $ foldMap (uncurry linkOrPrintErrs) tags
+        -- Validation.codiagonal $ foldMap (uncurry linkOrPrintErrs) tags
+        undefined
 
 printErrs :: Maybe String -> [Types.AnyErrors] -> IO ()
 printErrs n es = do
@@ -112,6 +107,7 @@ printErrs n es = do
                                         show indent ++
                                         " which is not divisible by the minimum." ++
                                         "  I don't know what level of nesting that is."
+                printDented :: Show a => a -> IO ()
                 printDented = putStrLn . ("  " ++) . show
                 printDocumentErr = printDented
                 printFindingTagErr = printDented
@@ -119,23 +115,22 @@ printErrs n es = do
 
 refreshIndex :: FilePath -> IO Bool
 refreshIndex (dropWhile (== ' ') -> journalRoot) = do
-        tagsFolder <- inRoot "tags"
-        docsFolder <- inRoot "docs"
-        tagMapFile <- inRoot "tagmap"
+        tagsFolder <- inJournalRoot "tags"
+        docsFolder <- inJournalRoot "docs"
+        tagMapFile <- inJournalRoot "tagmap"
         let linker = fsLinker tagsFolder docsFolder
-        checkResults <- sequence $
+        noMissingPaths <- and <$> sequence
                 [
-                        Dir.doesDirectoryExist tagsFolder
-                                `orPrintErr` ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
-                ,       Dir.doesDirectoryExist docsFolder
-                                `orPrintErr` ("Docs folder " ++ docsFolder ++ " doesn't exist!")
-                ,       Dir.doesFileExist tagMapFile
-                                `orPrintErr` ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
+                        Dir.doesDirectoryExist tagsFolder `orPrintErr`
+                                ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
+                ,       Dir.doesDirectoryExist docsFolder `orPrintErr`
+                                ("Docs folder " ++ docsFolder ++ " doesn't exist!")
+                ,       Dir.doesFileExist tagMapFile `orPrintErr`
+                                ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
                 ]
-        let sufficientDirectoryTree = and checkResults
-        when sufficientDirectoryTree $
+        when noMissingPaths $
                 linkDocuments linker tagsFolder docsFolder tagMapFile
-        return sufficientDirectoryTree
+        return noMissingPaths
         where
-        inRoot = Dir.makeAbsolute . (journalRoot </>)
+        inJournalRoot = Dir.makeAbsolute . (journalRoot </>)
         orPrintErr q err = q >>= \b -> unless b (putStrLn err) $> b
