@@ -17,11 +17,8 @@ import Control.DeepSeq(force)
 import Control.Exception(SomeException, evaluate, try)
 import Control.Monad(unless)
 import Control.Monad.Reader
-import Data.Bifunctor(bimap, first)
-import Data.Coerce
 import Data.Foldable(toList, traverse_)
 import Data.Functor(($>), void)
-import Data.Functor.Identity(Identity(..))
 import Data.List(isSuffixOf)
 import Data.Maybe(fromJust)
 import System.FilePath((</>))
@@ -85,7 +82,7 @@ dryRunLinker tagsFolder = Linker (dryRunLink)
                 let diff = diffMultipleTagFS oldFS fss
                 case diff of
                         Nothing -> putStrLn "Nothing to be done!"
-                        Just diff -> putDoc diff *> putStrLn ""
+                        Just p -> putDoc p *> putStrLn ""
 
 -- | Given a linker in IO, create links for all of the documents in `docsFolder`,
 -- | inside of `tagsFolder`, using `tagMapFile` as a reference for tag prefixes.
@@ -93,9 +90,8 @@ linkDocuments ::
         Linker (IO ()) ->
         FilePath ->
         FilePath ->
-        FilePath ->
         IO ()
-linkDocuments linker tagsFolder docsFolder tagMapFile = do
+linkDocuments linker docsFolder tagMapFile = do
         tagMap <- readBulletedTagMap . lines <$> readFile tagMapFile
         _ <- evaluate (force tagMap)
         docContents <- Dir.listDirectory docsFolder
@@ -165,7 +161,7 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
                                 ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
                 ]
         when noMissingPaths $
-                linkDocuments linker tagsFolder docsFolder tagMapFile
+                linkDocuments linker docsFolder tagMapFile
         where
         inJournalRoot = Dir.makeAbsolute . (journalRoot </>)
         orPrintErr q err = q >>= \b -> unless b (putStrLn err) $> b

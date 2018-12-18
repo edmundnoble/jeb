@@ -8,20 +8,14 @@ import Prelude hiding((.), id)
 import Control.Category(Category(..))
 import Control.Lens hiding ((<|))
 import Data.Bifunctor(first)
-import Data.Foldable(traverse_)
-import Data.List(isPrefixOf, sort)
+import Data.List(isPrefixOf)
 import Data.List.NonEmpty(NonEmpty(..))
 import Data.List.Split(splitWhen)
-import Data.Map.Strict(Map)
 import Data.Maybe(fromMaybe)
-import Data.Tuple(swap)
 import Data.Validation(Validation(..))
-import System.Posix.Files(createSymbolicLink)
-import Text.PrettyPrint.ANSI.Leijen(Doc, Pretty(..), nest, text)
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Validation as Validation
-import qualified System.Directory as Dir
 import qualified System.FilePath.Posix as FP
 import qualified System.IO.Unsafe as U
 
@@ -188,8 +182,9 @@ minimumIndent =
 -- | Reads a TagMap out of a list of lines.
 --
 -- Examples:
+-- >>> import Data.List(sort)
 -- >>> :{
--- sort $ fmap swap $ Map.toList $ readBulletedTagMap
+-- (sort . fmap (\(k, v) -> k:v) . Map.toList . readBulletedTagMap) $
 --      [
 --      "Tags:",
 --      "  * One tag",
@@ -200,7 +195,7 @@ minimumIndent =
 --      "  * Two tag"
 --      ]
 -- :}
--- [([],"One tag"),([],"Two tag"),(["One tag"],"One tag in one tag"),(["One tag"],"Two tag in one tag"),(["One tag in one tag","One tag"],"One tag in one tag in one tag"),(["Two tag in one tag","One tag"],"One tag in two tag in one tag")]
+-- [["One tag"],["One tag in one tag","One tag"],["One tag in one tag in one tag","One tag in one tag","One tag"],["One tag in two tag in one tag","Two tag in one tag","One tag"],["Two tag"],["Two tag in one tag","One tag"]]
 --
 -- >>> readBulletedTagMap []
 -- fromList []

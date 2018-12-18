@@ -15,14 +15,12 @@
 module J.Indexing.Types where
 
 import Control.Lens(foldMapOf, makeClassyPrisms, makeLenses, makePrisms, over, traverseOf)
-import Control.Monad(guard, join)
-import Control.Monad.Reader(Reader, ReaderT(..))
+import Control.Monad(join)
 import Data.Algorithm.Diff(Diff(..), getDiffBy)
 import Data.Coerce(coerce)
 import Data.Function(on)
-import Data.Functor.Identity(Identity(..))
 import Data.Map.Strict(Map)
-import Data.List(foldl', sort)
+import Data.List(foldl')
 import Data.Maybe(catMaybes)
 
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
@@ -58,10 +56,6 @@ newtype PrefixedTag = PrefixedTag [String]
         deriving Show
 
 data TagFS = TagDir !String ![TagFS] | DocFile !String deriving (Eq, Ord)
-
-sortFS :: TagFS -> TagFS
-sortFS (TagDir n cs) = TagDir n (sortFS <$> (sort cs))
-sortFS fs = fs
 
 -- |
 -- Examples:
@@ -142,7 +136,7 @@ fsName (TagDir n _) = n
 -- | Has colored output.
 -- | You may want to sort the output.
 -- Examples:
--- >>> PP.plain . PP.pretty $ diffMultipleTagFS (DocFile "hey") (DocFile "hello")
+-- >>> PP.plain . PP.pretty $ diffMultipleTagFS [DocFile "hey"] [DocFile "hello"]
 -- - hey
 -- + hello
 --
@@ -185,7 +179,7 @@ diffMultipleTagFS fss fss' = let
         differentlyNamed = getDiffBy ((==) `on` fsName) fss fss'
         recurse (Both (TagDir n cs) (TagDir _ cs')) =
                 PP.nest 4 . (PP.text n PP.<$$>) <$> diffMultipleTagFS cs cs'
-        recurse (Both fs@(DocFile n) fs'@(DocFile n')) | n == n' =
+        recurse (Both (DocFile n) (DocFile n')) | n == n' =
                 Nothing
         recurse (Both fs fs') = Just (
                 PP.red (PP.text "-" PP.<+> PP.pretty fs) PP.<$$>
