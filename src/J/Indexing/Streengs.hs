@@ -243,39 +243,3 @@ readBulletedTagMap tagMapLines =
                         else
                                 go (y:ss) xs
         go _ [] = Map.empty
-
--- | Read the document filesystem from disk.
-readTagFS :: FilePath -> IO TagFS
-readTagFS path = do
-        let baseName = FP.takeBaseName path
-        isDir <- Dir.doesDirectoryExist path
-        if isDir
-        then do
-                contents <- Dir.listDirectory path
-                let absolutize = (path FP.</>)
-                let readSubdirFS n =
-                        U.unsafeInterleaveIO (readTagFS (absolutize n))
-                recFss <- traverse readSubdirFS contents
-                return $ TagDir baseName recFss
-        else return $ DocFile baseName
-
--- | Write the document filesystem from disk.
-writeTagFS :: FilePath -> FilePath -> TagFS -> IO ()
-writeTagFS tagsPath docsPath (TagDir n fs) =
-        traverse_ (writeTagFS (tagsPath FP.</> n) docsPath) fs
-writeTagFS tagsPath docsPath (DocFile name) = do
-        let symLinkPath = tagsPath FP.</> name
-        let docFile = docsPath FP.</> name
-        createSymbolicLink docFile tagsPath
-
--- | Converts a tag filesystem into a listing of its contents recursively,
--- | pairing filenames to full tag paths.
-tagFSToDocMap :: TagFS -> Map String [PrefixedTag]
-tagFSToDocMap = go []
-        where
-        go :: [String] -> TagFS -> Map String [PrefixedTag]
-        go ss (DocFile n) = Map.singleton n [PrefixedTag ss]
-        go ss (TagDir n cs) =
-                Map.unionsWith (++) (go (n:ss) <$> cs )
-
--- docMapToTagFS :: Map String [PrefixedTag] -> TagFS

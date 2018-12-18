@@ -29,6 +29,7 @@ executable j
                     , containers
                     , deepseq
                     , directory
+                    , Diff
                     , filepath
                     , free
                     , ghc-prim
@@ -65,6 +66,7 @@ library j-lib
                     , containers
                     , deepseq
                     , directory
+                    , Diff
                     , filepath
                     , free
                     , ghc-prim

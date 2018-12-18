@@ -15,15 +15,20 @@
 module J.Indexing.Types where
 
 import Control.Lens(foldMapOf, makeClassyPrisms, makeLenses, makePrisms, over, traverseOf)
-import Control.Monad(join)
+import Control.Monad(guard, join)
 import Control.Monad.Reader(Reader, ReaderT(..))
+import Data.Algorithm.Diff(Diff(..), getDiffBy)
 import Data.Coerce(coerce)
+import Data.Function(on)
 import Data.Functor.Identity(Identity(..))
 import Data.Map.Strict(Map)
 import Data.List(foldl', sort)
+import Data.Maybe(catMaybes)
 
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 import qualified Data.Map.Strict as Map
+
+type TagMap = Map String [String]
 
 newtype Position = Position Int
         deriving Show
@@ -52,8 +57,6 @@ newtype UnprefixedTag = UnprefixedTag String
 newtype PrefixedTag = PrefixedTag [String]
         deriving Show
 
--- the derived ord instance does exactly what we want, *plus* working on
--- noncanonical (duplicate folder names) filesystems.
 data TagFS = TagDir !String ![TagFS] | DocFile !String deriving (Eq, Ord)
 
 sortFS :: TagFS -> TagFS
@@ -79,6 +82,7 @@ sortFS fs = fs
 --     folder11
 --         doc3
 --     doc4
+
 instance PP.Pretty TagFS where
         pretty (DocFile n) = PP.text n
         pretty (TagDir n ms) =
@@ -107,13 +111,16 @@ instance PP.Pretty TagFS where
 --
 -- >>> :{
 -- PP.pretty $
---         insertFS "doc1" (PrefixedTag ["tag2", "tag1"]) [TagDir "tag1" [TagDir "tag2" [DocFile "doc2"]]]
+--         insertFS "doc1" (PrefixedTag ["tag3", "tag2", "tag1"])
+--                 [TagDir "tag1" [TagDir "tag2" [TagDir "tag3" [DocFile "doc2"]]]]
 -- :}
 -- tag1
 --     tag2
---         doc1
---         doc2
+--         tag3
+--             doc1
+--             doc2
 --
+
 insertFS :: String -> PrefixedTag -> [TagFS] -> [TagFS]
 insertFS n (PrefixedTag tt) = go (reverse tt)
         where
@@ -127,68 +134,107 @@ insertFS n (PrefixedTag tt) = go (reverse tt)
         go (p:t) (replace (tryInsert p t) -> Just xs) = xs
         go ss xs = singletonTagFS n (PrefixedTag ss) : xs
 
--- | Computes the difference between two tag filesystems.
+fsName :: TagFS -> String
+fsName (DocFile n) = n
+fsName (TagDir n _) = n
+
+-- | Computes the difference between two tag filesystems, if there is one.
 -- | Has colored output.
--- | Sort your filesystems before passing them in, pretty-please.
--- | This doesn't use any particularly nice diff algorithms, unfortunately.
--- | I plan to use patience diffing later.
+-- | You may want to sort the output.
 -- Examples:
--- >>> :{
--- PP.plain $ diffTagFS (DocFile "hey") (DocFile "hello")
--- :}
+-- >>> PP.plain . PP.pretty $ diffMultipleTagFS (DocFile "hey") (DocFile "hello")
 -- - hey
 -- + hello
 --
 -- >>> :{
--- PP.plain $ diffTagFS (DocFile "hey") (DocFile "hey")
+-- PP.plain . PP.pretty $ diffMultipleTagFS [TagDir "tag" [DocFile "hey"]] [DocFile "hey"]
 -- :}
--- hey
+-- - tag
+--     hey
+-- + hey
 --
 -- >>> :{
--- PP.plain $ diffTagFS (TagDir "tag" [DocFile "hey"]) (TagDir "tag" [DocFile "hello"])
+-- PP.plain . PP.pretty $ (diffMultipleTagFS
+--           [TagDir "tag" [
+--                    DocFile "hey"]]
+--           [TagDir "tag" [
+--                    DocFile "hello"]])
 -- :}
 -- tag
 --     - hey
 --     + hello
 --
 -- >>> :{
--- PP.plain $ diffTagFS (TagDir "tag1" [DocFile "hey"]) (TagDir "tag2" [DocFile "hello"])
+-- PP.plain $ PP.pretty (diffMultipleTagFS
+--          [TagDir "tag1" [
+--                   TagDir "tag11" [
+--                            DocFile "hey"]]]
+--          [TagDir "tag1" [
+--                   TagDir "tag12" [
+--                            DocFile "hey"]]])
 -- :}
--- - tag1
---     hey
--- + tag2
---     hello
-diffTagFS :: TagFS -> TagFS -> PP.Doc
-diffTagFS (DocFile n) (DocFile n')
-        | n == n' = PP.text n
-        | otherwise =
-                PP.red (PP.text ("- " ++ n)) PP.<$$>
-                PP.green (PP.text ("+ " ++ n'))
-diffTagFS fs@(TagDir n cs) fs'@(TagDir n' cs')
-        | n == n'       = PP.nest 4 $ PP.vcat (PP.text n : (uncurry diffTagFS <$> zip cs cs'))
-        | otherwise     = PP.red (PP.text "-" PP.<+> PP.pretty fs) PP.<$$>
-                          PP.green (PP.text "+" PP.<+> PP.pretty fs')
+-- tag1
+--     - tag11
+--         hey
+--     + tag12
+--         hey
 
--- | Create a tag filesystem from a single docuemnt with a single prefixed tag.
+diffMultipleTagFS :: [TagFS] -> [TagFS] -> Maybe PP.Doc
+diffMultipleTagFS [] [] = Nothing
+diffMultipleTagFS fss fss' = let
+        differentlyNamed = getDiffBy ((==) `on` fsName) fss fss'
+        recurse (Both (TagDir n cs) (TagDir _ cs')) =
+                PP.nest 4 . (PP.text n PP.<$$>) <$> diffMultipleTagFS cs cs'
+        recurse (Both fs@(DocFile n) fs'@(DocFile n')) | n == n' =
+                Nothing
+        recurse (Both fs fs') = Just (
+                PP.red (PP.text "-" PP.<+> PP.pretty fs) PP.<$$>
+                PP.green (PP.text "+" PP.<+> PP.pretty fs'))
+        recurse (First fs) =
+                Just $ PP.red (PP.text "-" PP.<+> PP.pretty fs)
+        recurse (Second fs') =
+                Just $ PP.green (PP.text "+" PP.<+> PP.pretty fs')
+        loop = catMaybes $ recurse <$> differentlyNamed in
+        if null loop
+        then Nothing
+        else Just (PP.vcat loop)
+
+
+-- | Create a tag filesystem from a single document with a single prefixed tag.
 -- Examples:
 -- >>> :{
 -- PP.pretty $ singletonTagFS
---         "doc" (PrefixedTag ["taginner", "tagmiddle", "tagouter"])
+--         "doc" (PrefixedTag ["tagouter", "tagmiddle", "taginner"])
 -- :}
 -- tagouter
 --     tagmiddle
 --         taginner
 --             doc
+
 singletonTagFS :: String -> PrefixedTag -> TagFS
 singletonTagFS n (PrefixedTag tt) =
-        foldl' (\a t -> TagDir t [a]) (DocFile n) tt
+        foldl' (\a t -> TagDir t [a]) (DocFile n) (reverse tt)
 
 type role Linker representational
-newtype Linker a = Linker (TagFS -> a)
+newtype Linker a = Linker ([TagFS] -> a)
 
-link :: Linker a -> TagFS -> a
+link :: Linker a -> [TagFS] -> a
 link = coerce
 {-# inline conlike link #-}
+
+-- | Converts a tag filesystem into a listing of its contents recursively,
+-- | pairing filenames to full tag paths.
+
+tagFSToDocMap :: TagFS -> [(String, [PrefixedTag])]
+tagFSToDocMap = Map.toAscList . go []
+        where
+        go :: [String] -> TagFS -> Map String [PrefixedTag]
+        go ss (DocFile n) = Map.singleton n [PrefixedTag ss]
+        go ss (TagDir n cs) =
+                Map.unionsWith (++) $ go (n:ss) <$> cs
+
+docMapToTagFS :: [(String, [PrefixedTag])] -> [TagFS]
+docMapToTagFS = foldl' (\b (n, ts) -> foldl' (flip (insertFS n)) b ts) []
 
 data ErrorReadingDocument
         = NoTagSectionFound
@@ -271,5 +317,3 @@ instance AsErrorFindingTag AnyErrors where
 
 instance AsErrorWritingTagLinks AnyErrors where
         _ErrorWritingTagLinks = _AnyErrorWritingTagLinks
-
-type TagMap = Map String [String]

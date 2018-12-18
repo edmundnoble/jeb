@@ -1,10 +1,12 @@
 {-# language DeriveFunctor #-}
 {-# language DerivingVia #-}
 {-# language DerivingStrategies #-}
+{-# language FlexibleContexts #-}
 {-# language GeneralizedNewtypeDeriving #-}
-{-# language NoMonomorphismRestriction #-}
 {-# language RoleAnnotations #-}
 {-# language LambdaCase #-}
+{-# language MonoLocalBinds #-}
+{-# language NoMonomorphismRestriction #-}
 {-# language ViewPatterns #-}
 
 module J.Indexing.Main(refreshIndex) where
@@ -15,23 +17,24 @@ import Control.DeepSeq(force)
 import Control.Exception(SomeException, evaluate, try)
 import Control.Monad(unless)
 import Control.Monad.Reader
-import Data.Bifunctor(bimap)
+import Data.Bifunctor(bimap, first)
 import Data.Coerce
-import Data.Foldable(foldl', toList, traverse_)
+import Data.Foldable(toList, traverse_)
 import Data.Functor(($>), void)
 import Data.Functor.Identity(Identity(..))
-import Data.List(intercalate, isSuffixOf)
+import Data.List(isSuffixOf)
 import Data.Maybe(fromJust)
-import Data.Map.Lazy(Map)
 import System.FilePath((</>))
 import System.Posix.Files(createSymbolicLink)
+import Text.PrettyPrint.ANSI.Leijen(putDoc)
 
-import qualified System.Directory as Dir
-import qualified Data.Map.Lazy as Map
 import qualified Data.Validation as Validation
+import qualified System.Directory as Dir
+import qualified System.FilePath as FP
+import qualified System.IO.Unsafe as U
 
-import qualified J.Indexing.Types as Types
-import qualified J.Indexing.Streengs as Streengs
+import J.Indexing.Types
+import J.Indexing.Streengs
 
 ignoreSyncErrors :: IO () -> IO ()
 ignoreSyncErrors io = void (try io :: IO (Either SomeException ()))
@@ -40,43 +43,74 @@ isValidDocFileName :: FilePath -> Bool
 isValidDocFileName =
         (".md" `isSuffixOf`)
 
+-- | Read a document filesystem from disk.
+readTagFS :: FilePath -> IO TagFS
+readTagFS path = do
+        let baseName = FP.takeFileName path
+        isDir <- Dir.doesDirectoryExist path
+        if isDir
+        then do
+                contents <- Dir.listDirectory path
+                let absolutize = (path </>)
+                let readSubdirFS n =
+                        U.unsafeInterleaveIO (readTagFS (absolutize n))
+                recFss <- traverse readSubdirFS contents
+                return $ TagDir baseName recFss
+        else return $ DocFile baseName
+
+-- | Write the document filesystem from disk.
+writeTagFS :: FilePath -> FilePath -> TagFS -> IO ()
+writeTagFS tagsPath docsPath (TagDir n fs) =
+        traverse_ (writeTagFS (tagsPath </> n) docsPath) fs
+writeTagFS tagsPath docsPath (DocFile name) = do
+        let symLinkPath = tagsPath </> name
+        let docFile = docsPath </> name
+        createSymbolicLink docFile symLinkPath
+
 -- | Mirrors a TagFS onto a real filesystem in `tagsFolder`,
-fsLinker :: FilePath -> FilePath -> Types.Linker (IO ())
-fsLinker tagsFolder docsFolder = Types.Linker fsLink
+fsLinker :: FilePath -> FilePath -> Linker (IO ())
+fsLinker tagsFolder docsFolder = Linker (traverse_ fsLink)
         where
         fsLink fs = do
                 ignoreSyncErrors (Dir.removeDirectoryRecursive tagsFolder)
                 Dir.createDirectoryIfMissing False tagsFolder
-                Streengs.writeTagFS tagsFolder docsFolder fs
+                writeTagFS tagsFolder docsFolder fs
+
+dryRunLinker :: FilePath -> Linker (IO ())
+dryRunLinker tagsFolder = Linker (dryRunLink)
+        where
+        dryRunLink fss = do
+                contents <- Dir.listDirectory tagsFolder
+                oldFS <- traverse (readTagFS . (tagsFolder </>)) contents
+                let diff = diffMultipleTagFS oldFS fss
+                case diff of
+                        Nothing -> putStrLn "Nothing to be done!"
+                        Just diff -> putDoc diff *> putStrLn ""
 
 -- | Given a linker in IO, create links for all of the documents in `docsFolder`,
 -- | inside of `tagsFolder`, using `tagMapFile` as a reference for tag prefixes.
 linkDocuments ::
-        Types.Linker (IO ()) ->
+        Linker (IO ()) ->
         FilePath ->
         FilePath ->
         FilePath ->
         IO ()
 linkDocuments linker tagsFolder docsFolder tagMapFile = do
-        tagMap <- Streengs.readBulletedTagMap . lines <$> readFile tagMapFile
+        tagMap <- readBulletedTagMap . lines <$> readFile tagMapFile
         _ <- evaluate (force tagMap)
         docContents <- Dir.listDirectory docsFolder
         let docNames = filter isValidDocFileName docContents
         let readDocNamed n = ((,) n) <$> readFile (docsFolder </> n)
-        let getPrefixedTags = flip Streengs.readPrefixedTags tagMap
         namedDocs <- traverse readDocNamed docNames
         _ <- evaluate (force namedDocs)
-        ignoreSyncErrors (Dir.removeDirectoryRecursive tagsFolder)
-        Dir.createDirectoryIfMissing True tagsFolder
-        -- let linkOrPrintErrs n = bimap (printErrs (Just n) . toList) (Types.link linker n)
-        let tags = (fmap . fmap) getPrefixedTags namedDocs
-        -- Validation.codiagonal $ foldMap (uncurry linkOrPrintErrs) tags
-        undefined
+        let tags = (fmap . fmap) (flip readPrefixedTags tagMap) namedDocs
+        traverse_ (\(n, v) -> Validation.validation (printErrs (Just n) . toList) (const (pure ())) v) tags
+        traverse_ (link linker . docMapToTagFS) (sequenceA (sequenceA <$> tags))
 
-printErrs :: Maybe String -> [Types.AnyErrors] -> IO ()
+printErrs :: Maybe String -> [AnyErrors] -> IO ()
 printErrs n es = do
-        let Types.AllErrors errs1 errs2 errs3 errs4 =
-                Types.collectErrors es
+        let AllErrors errs1 errs2 errs3 errs4 =
+                collectErrors es
         unless (null errs1) $ do
                 putStrLn "Errors reading tag map:"
                 traverse_ printTagMapErr errs1
@@ -97,7 +131,7 @@ printErrs n es = do
                 traverse_ printWritingTagLinkErr errs4
         where
                 printTagMapErr a = case a of
-                        Types.InvalidIndentation (Types.Position l) minIndent indent ->
+                        InvalidIndentation (Position l) minIndent indent ->
                                 putStrLn $
                                         "  At line " ++
                                         show l ++
@@ -113,12 +147,14 @@ printErrs n es = do
                 printFindingTagErr = printDented
                 printWritingTagLinkErr = printDented
 
-refreshIndex :: FilePath -> IO Bool
-refreshIndex (dropWhile (== ' ') -> journalRoot) = do
+refreshIndex :: FilePath -> Bool -> IO ()
+refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
         tagsFolder <- inJournalRoot "tags"
         docsFolder <- inJournalRoot "docs"
         tagMapFile <- inJournalRoot "tagmap"
-        let linker = fsLinker tagsFolder docsFolder
+        let linker = (if reallyDoIt
+                then fsLinker
+                else const . dryRunLinker) tagsFolder docsFolder
         noMissingPaths <- and <$> sequence
                 [
                         Dir.doesDirectoryExist tagsFolder `orPrintErr`
@@ -130,7 +166,6 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) = do
                 ]
         when noMissingPaths $
                 linkDocuments linker tagsFolder docsFolder tagMapFile
-        return noMissingPaths
         where
         inJournalRoot = Dir.makeAbsolute . (journalRoot </>)
         orPrintErr q err = q >>= \b -> unless b (putStrLn err) $> b

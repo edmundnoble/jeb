@@ -16,10 +16,17 @@ journalRoot = O.strOption
         <> O.value "."
         )
 
-opts :: O.ParserInfo (IO Bool)
+dryRun :: O.Parser Bool
+dryRun = O.switch
+        (  O.short 'd'
+        <> O.long "dry-run"
+        <> O.help "If true, only display a diff describing the desired changes"
+        )
+
+opts :: O.ParserInfo (IO ())
 opts = O.info (cli O.<**> O.helper)
         (  O.fullDesc
         <> O.progDesc "J tool" )
 
-cli :: O.Parser (IO Bool)
-cli = Indexing.refreshIndex <$> journalRoot
+cli :: O.Parser (IO ())
+cli = Indexing.refreshIndex <$> journalRoot <*> (not <$> dryRun)
