@@ -64,7 +64,7 @@ writeTagFS tagsPath docsPath (DocFile name) = do
         let docFile = docsPath </> name
         createSymbolicLink docFile symLinkPath
 
--- | Mirrors a TagFS onto a real filesystem in `tagsFolder`,
+-- | Synchronize a TagFS from `docsFolder` onto a filesystem in `tagsFolder`,
 fsLinker :: FilePath -> FilePath -> Linker (IO ())
 fsLinker tagsFolder docsFolder = Linker (traverse_ fsLink)
         where
@@ -73,6 +73,7 @@ fsLinker tagsFolder docsFolder = Linker (traverse_ fsLink)
                 Dir.createDirectoryIfMissing False tagsFolder
                 writeTagFS tagsFolder docsFolder fs
 
+-- | Compute a diff from `docsFolder` onto the filesystem in `tagsFolder`,
 dryRunLinker :: FilePath -> Linker (IO ())
 dryRunLinker tagsFolder = Linker (dryRunLink)
         where
