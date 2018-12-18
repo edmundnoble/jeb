@@ -16,8 +16,6 @@ import Data.Validation(Validation(..))
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Validation as Validation
-import qualified System.FilePath.Posix as FP
-import qualified System.IO.Unsafe as U
 
 import J.Indexing.Types
 
@@ -105,6 +103,7 @@ linesWithTags ls =
 -- Examples:
 -- >>> readPrefixedTags "" undefined :: Validation (NonEmpty AnyErrors) [PrefixedTag]
 -- Failure (AnyErrorReadingDocument NoTagSectionFound :| [])
+
 readPrefixedTags ::
         (AsErrorReadingDocument e, AsErrorFindingTag e) =>
         String -> TagMap -> Validation (NonEmpty e) [PrefixedTag]
@@ -132,6 +131,7 @@ readUnprefixedTags doc =
 
 -- | Trims the beginning of a string, removing whitespace.
 -- | Only spaces are treated as whitespace deliberately.
+
 trimStart :: String -> String
 trimStart = dropWhile (== ' ')
 
@@ -199,17 +199,16 @@ minimumIndent =
 --
 -- >>> readBulletedTagMap []
 -- fromList []
+
 readBulletedTagMap :: [String] -> TagMap
 readBulletedTagMap [] = mempty
 readBulletedTagMap tagMapLines =
         -- TODO: add Validation, proper error for unproportional indenting
-        go [] $ indentForwardDifferences $ separateIndents <$> bulletLines
+        loop [] $ indentForwardDifferences $ separateIndents <$> bulletLines
         where
         bulletLines = filter (isPrefixOf "*" . trimStart) tagMapLines
 
         minIndent = fromMaybe 2 $ minimumIndent bulletLines
-
-        countIndents = (`div` minIndent)
 
         -- first, count the number of spaces in each indent,
         -- and extract the name of the tag.
@@ -227,14 +226,14 @@ readBulletedTagMap tagMapLines =
                         ((,y) $! (l-x)):(go x xs)
                 go _ [] = []
 
-        go :: [String] -> [(Int, String)] -> TagMap
-        go ss ((x, y):xs) =
+        loop :: [String] -> [(Int, String)] -> TagMap
+        loop ss ((x, y):xs) =
                 let nextDelta = x `div` minIndent in
                 let insertNew = Map.insert y ss in
                 insertNew $
                         if nextDelta <= 0
                         then
-                                go (drop (-nextDelta) ss) xs
+                                loop (drop (-nextDelta) ss) xs
                         else
-                                go (y:ss) xs
-        go _ [] = Map.empty
+                                loop (y:ss) xs
+        loop _ [] = Map.empty
