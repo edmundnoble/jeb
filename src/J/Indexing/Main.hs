@@ -107,26 +107,23 @@ printErrs :: Maybe String -> [AnyErrors] -> IO ()
 printErrs n es = do
         let AllErrors errs1 errs2 errs3 errs4 =
                 collectErrors es
-        unless (null errs1) $ do
-                putStrLn "Errors reading tag map:"
-                traverse_ printTagMapErr errs1
-        unless (null errs2) $ do
-                putStrLn (
-                        "Errors reading document (" ++
-                        fromJust n ++
-                        "):")
-                traverse_ printDocumentErr errs2
-        unless (null errs3) $ do
-                putStrLn (
-                        "Errors finding tags in tagmap (" ++
-                        fromJust n ++
-                        "):")
-                traverse_ printFindingTagErr errs3
-        unless (null errs4) $ do
-                putStrLn "Errors writing symbolic links for tags:"
-                traverse_ printWritingTagLinkErr errs4
+        let printErrsWithPreamble errs prnt msg = unless (null errs) $ do
+                putStrLn msg
+                traverse_ prnt errs
+        printErrsWithPreamble errs1 printTagMapErr
+                "Errors reading tag map:"
+        printErrsWithPreamble errs2 printDented (
+                "Errors reading document (" ++
+                fromJust n ++
+                "):")
+        printErrsWithPreamble errs3 printDented (
+                "Errors finding tags in tagmap (" ++
+                fromJust n ++
+                "):")
+        printErrsWithPreamble errs4 printDented
+                "Errors writing symbolic links for tags:"
         where
-                printTagMapErr a = case a of
+                printTagMapErr = \case
                         InvalidIndentation (Position l) minIndent indent ->
                                 putStrLn $
                                         "  At line " ++
@@ -139,16 +136,13 @@ printErrs n es = do
                                         "  I don't know what level of nesting that is."
                 printDented :: Show a => a -> IO ()
                 printDented = putStrLn . ("  " ++) . show
-                printDocumentErr = printDented
-                printFindingTagErr = printDented
-                printWritingTagLinkErr = printDented
 
 refreshIndex :: FilePath -> Bool -> IO ()
 refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
         tagsFolder <- inJournalRoot "tags"
         docsFolder <- inJournalRoot "docs"
         tagMapFile <- inJournalRoot "tagmap"
-        let linker = (if reallyDoIt
+        let synchronizeFilesystems = (if reallyDoIt
                 then fsLinker
                 else const . dryRunLinker) tagsFolder docsFolder
         noMissingPaths <- and <$> sequence
@@ -161,7 +155,7 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
                                 ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
                 ]
         when noMissingPaths $
-                linkDocuments linker docsFolder tagMapFile
+                linkDocuments synchronizeFilesystems docsFolder tagMapFile
         where
         inJournalRoot = Dir.makeAbsolute . (journalRoot </>)
         orPrintErr q err = q >>= \b -> unless b (putStrLn err) $> b
