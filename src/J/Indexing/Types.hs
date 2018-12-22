@@ -57,19 +57,68 @@ newtype PrefixedTag = PrefixedTag [String]
 
 data TagFS = TagDir !String ![TagFS] | DocFile !String deriving (Eq, Ord)
 
--- |
+data Tree a = Tree a [Tree a]
+
+-- | Converts a TagFS to a rose tree, not
+-- | distinguishing between documents and empty folders.
+tagFSToTree :: TagFS -> Tree String
+tagFSToTree (TagDir n cs) = Tree n (tagFSToTree <$> cs)
+tagFSToTree (DocFile n) = Tree n []
+
+label :: Tree a -> a
+label (Tree a _) = a
+
+children :: Tree a -> [Tree a]
+children (Tree _ cs) = cs
+
+data DiffPrinter a
+        = DiffPrinter {
+                _printLabel :: a -> PP.Doc,
+                _printFirst :: Tree a -> PP.Doc,
+                _printSecond :: Tree a -> PP.Doc
+        }
+
+standardPrinter :: PP.Pretty a => (Tree a -> PP.Doc) -> DiffPrinter a
+standardPrinter f =
+        DiffPrinter
+                PP.pretty
+                (PP.red . (PP.text "-" PP.<+>) . f)
+                (PP.green . (PP.text "+" PP.<+>) . f)
+
+-- | General tree diffing algorithm.
+-- | Given any ordinary diff algorithm and a way to print the labels of a rose
+-- | tree, prints a diff of two lists of rose trees.
+-- | If there is no difference, returns `Nothing`.
+diffT ::
+        Eq a =>
+        (forall x. (x -> x -> Bool) -> [x] -> [x] -> [Diff x]) ->
+        DiffPrinter a ->
+        [Tree a] ->
+        [Tree a] ->
+        Maybe PP.Doc
+diffT diffBy printer = go where
+        go [] [] = Nothing
+        go ts ts' = let
+                diff = diffBy ((==) `on` label) ts ts'
+                recurse (Both (Tree b cs) (Tree _ cs')) =
+                        PP.nest 4 . (_printLabel printer b PP.<$$>) <$> go cs cs'
+                recurse (First fs) =
+                        Just $ _printFirst printer fs
+                recurse (Second fs') =
+                        Just $ _printSecond printer fs'
+                loop = catMaybes $ recurse <$> diff in
+                if null loop then Nothing else Just (PP.vcat loop)
+
+-- | Prints a rose tree in the style of a filesystem.
 -- Examples:
--- >>> PP.pretty (DocFile "doc")
+-- >>> prettyFS (Tree "doc" [])
 -- doc
--- >>> PP.pretty (TagDir "folder" [])
+-- >>> prettyFS (Tree "folder" [])
 -- folder
--- >>> PP.pretty (TagDir "folder" [DocFile "doc"])
+-- >>> prettyFS (Tree "folder" [Tree "doc" []])
 -- folder
 --     doc
--- >>> let doc1 = ("folder1", DocFile "doc1")
--- >>> let doc2 = ("folder2", DocFile "doc2")
--- >>> let three = ("folder2", DocFile "doc2")
--- >>> PP.pretty (TagDir "folder1" [DocFile "doc1", DocFile "doc2", TagDir "folder11" [DocFile "doc3"], DocFile "doc4"])
+-- >>> prettyFS (Tree "folder1" [Tree "doc1" [], Tree "doc2" [], Tree "folder11" [Tree "doc3" []], Tree "doc4" []])
 -- folder1
 --     doc1
 --     doc2
@@ -77,10 +126,12 @@ data TagFS = TagDir !String ![TagFS] | DocFile !String deriving (Eq, Ord)
 --         doc3
 --     doc4
 
+prettyFS :: PP.Pretty a => Tree a -> PP.Doc
+prettyFS (Tree n ms) =
+        PP.nest 4 $ PP.vcat (PP.pretty n : (prettyFS <$> ms))
+
 instance PP.Pretty TagFS where
-        pretty (DocFile n) = PP.text n
-        pretty (TagDir n ms) =
-                PP.nest 4 $ PP.vcat (PP.text n : (PP.pretty <$> ms))
+        pretty = prettyFS . tagFSToTree
         prettyList = PP.vcat . fmap PP.pretty
 
 -- | Insert a tagged document into a tag filesystem.
@@ -172,27 +223,9 @@ fsName (TagDir n _) = n
 --         hey
 --     + tag12
 --         hey
-
 diffMultipleTagFS :: [TagFS] -> [TagFS] -> Maybe PP.Doc
-diffMultipleTagFS [] [] = Nothing
-diffMultipleTagFS fss fss' = let
-        differentlyNamed = getDiffBy ((==) `on` fsName) fss fss'
-        recurse (Both (TagDir n cs) (TagDir _ cs')) =
-                PP.nest 4 . (PP.text n PP.<$$>) <$> diffMultipleTagFS cs cs'
-        recurse (Both (DocFile n) (DocFile n')) | n == n' =
-                Nothing
-        recurse (Both fs fs') = Just (
-                PP.red (PP.text "-" PP.<+> PP.pretty fs) PP.<$$>
-                PP.green (PP.text "+" PP.<+> PP.pretty fs'))
-        recurse (First fs) =
-                Just $ PP.red (PP.text "-" PP.<+> PP.pretty fs)
-        recurse (Second fs') =
-                Just $ PP.green (PP.text "+" PP.<+> PP.pretty fs')
-        loop = catMaybes $ recurse <$> differentlyNamed in
-        if null loop
-        then Nothing
-        else Just (PP.vcat loop)
-
+diffMultipleTagFS fs fs' =
+        diffT getDiffBy (standardPrinter prettyFS) (tagFSToTree <$> fs) (tagFSToTree <$> fs')
 
 -- | Create a tag filesystem from a single document with a single prefixed tag.
 -- Examples:
