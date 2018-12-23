@@ -38,6 +38,7 @@ executable j
                     , semigroupoids
                     , split
                     , time
+                    , transformers
                     , unix
                     , validation
                     , j-lib
@@ -70,6 +71,7 @@ library j-lib
                     , semigroupoids
                     , split
                     , time
+                    , transformers
                     , unix
                     , validation
   default-language:   Haskell2010

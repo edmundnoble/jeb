@@ -3,6 +3,7 @@
 
 module J.CLI(opts) where
 
+import Control.Monad.Trans.Maybe(MaybeT)
 import Data.Semigroup((<>))
 import qualified Options.Applicative as O
 
@@ -23,10 +24,10 @@ dryRun = O.switch
         <> O.help "If true, only display a diff describing the desired changes"
         )
 
-opts :: O.ParserInfo (IO ())
+opts :: O.ParserInfo (MaybeT IO ())
 opts = O.info (cli O.<**> O.helper)
         (  O.fullDesc
         <> O.progDesc "J tool" )
 
-cli :: O.Parser (IO ())
+cli :: O.Parser (MaybeT IO ())
 cli = Indexing.refreshIndex <$> journalRoot <*> (not <$> dryRun)

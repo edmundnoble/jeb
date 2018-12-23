@@ -16,16 +16,15 @@ import Control.Category(Category(..))
 import Control.DeepSeq(force)
 import Control.Exception(SomeException, evaluate, try)
 import Control.Monad(unless)
+import Control.Monad.Trans.Maybe(MaybeT)
 import Control.Monad.Reader
-import Data.Foldable(toList, traverse_)
+import Data.Foldable(traverse_)
 import Data.Functor(($>), void)
 import Data.List(isSuffixOf)
-import Data.Maybe(fromJust)
 import System.FilePath((</>))
 import System.Posix.Files(createSymbolicLink)
-import Text.PrettyPrint.ANSI.Leijen(putDoc)
+import Text.PrettyPrint.ANSI.Leijen(putDoc, pretty)
 
-import qualified Data.Validation as Validation
 import qualified System.Directory as Dir
 import qualified System.FilePath as FP
 import qualified System.IO.Unsafe as U
@@ -57,7 +56,8 @@ readTagFS path = do
 
 -- | Write the document filesystem from disk.
 writeTagFS :: FilePath -> FilePath -> TagFS -> IO ()
-writeTagFS tagsPath docsPath (TagDir n fs) =
+writeTagFS tagsPath docsPath (TagDir n fs) = do
+        Dir.createDirectoryIfMissing False (tagsPath </> n)
         traverse_ (writeTagFS (tagsPath </> n) docsPath) fs
 writeTagFS tagsPath docsPath (DocFile name) = do
         let symLinkPath = tagsPath </> name
@@ -66,16 +66,16 @@ writeTagFS tagsPath docsPath (DocFile name) = do
 
 -- | Synchronize a TagFS from `docsFolder` onto a filesystem in `tagsFolder`,
 fsLinker :: FilePath -> FilePath -> Linker (IO ())
-fsLinker tagsFolder docsFolder = Linker (traverse_ fsLink)
+fsLinker tagsFolder docsFolder = Linker fsLink
         where
-        fsLink fs = do
+        fsLink fss = do
                 ignoreSyncErrors (Dir.removeDirectoryRecursive tagsFolder)
                 Dir.createDirectoryIfMissing False tagsFolder
-                writeTagFS tagsFolder docsFolder fs
+                traverse_ (writeTagFS tagsFolder docsFolder) fss
 
 -- | Compute a diff from the filesystem in `tagsFolder`,
 dryRunLinker :: FilePath -> Linker (IO ())
-dryRunLinker tagsFolder = Linker (dryRunLink)
+dryRunLinker tagsFolder = Linker dryRunLink
         where
         dryRunLink fss = do
                 contents <- Dir.listDirectory tagsFolder
@@ -91,62 +91,27 @@ linkDocuments ::
         Linker (IO ()) ->
         FilePath ->
         FilePath ->
-        IO ()
+        MaybeT IO ()
 linkDocuments linker docsFolder tagMapFile = do
-        tagMap <- readBulletedTagMap . lines <$> readFile tagMapFile
-        _ <- evaluate (force tagMap)
-        docContents <- Dir.listDirectory docsFolder
+        tagMap <- lift $ readBulletedTagMap . lines <$> readFile tagMapFile
+        _ <- lift $ evaluate (force tagMap)
+        docContents <- lift $ Dir.listDirectory docsFolder
         let docNames = filter isValidDocFileName docContents
         let readDocNamed n = ((,) n) <$> readFile (docsFolder </> n)
-        namedDocs <- traverse readDocNamed docNames
-        _ <- evaluate (force namedDocs)
-        let tags = (fmap . fmap) (flip readPrefixedTags tagMap) namedDocs
-        traverse_ (\(n, v) -> Validation.validation (printErrs (Just n) . toList) (const (pure ())) v) tags
-        traverse_ (link linker . docMapToTagFS) (sequenceA (sequenceA <$> tags))
+        namedDocs <- lift $ traverse readDocNamed docNames
+        _ <- lift $ evaluate (force namedDocs)
+        tags <- sequenceA $ sequenceA <$> (fmap . fmap) (flip readPrefixedTags tagMap) namedDocs
+        lift $ (link linker . docMapToTagFS) tags
 
-printErrs :: Maybe String -> [AnyErrors] -> IO ()
-printErrs n es = do
-        let AllErrors errs1 errs2 errs3 errs4 =
-                collectErrors es
-        let printErrsWithPreamble errs prnt msg = unless (null errs) $ do
-                putStrLn msg
-                traverse_ prnt errs
-        printErrsWithPreamble errs1 printTagMapErr
-                "Errors reading tag map:"
-        printErrsWithPreamble errs2 printDented (
-                "Errors reading document (" ++
-                fromJust n ++
-                "):")
-        printErrsWithPreamble errs3 printDented (
-                "Errors finding tags in tagmap (" ++
-                fromJust n ++
-                "):")
-        printErrsWithPreamble errs4 printDented
-                "Errors writing symbolic links for tags:"
-        where
-                printTagMapErr = \case
-                        InvalidIndentation (Position l) minIndent indent ->
-                                putStrLn $
-                                        "  At line " ++
-                                        show l ++
-                                        ", with minimum indentation at " ++
-                                        show minIndent ++
-                                        ", the indentation was " ++
-                                        show indent ++
-                                        " which is not divisible by the minimum." ++
-                                        "  I don't know what level of nesting that is."
-                printDented :: Show a => a -> IO ()
-                printDented = putStrLn . ("  " ++) . show
-
-refreshIndex :: FilePath -> Bool -> IO ()
+refreshIndex :: FilePath -> Bool -> MaybeT IO ()
 refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
-        tagsFolder <- inJournalRoot "tags"
-        docsFolder <- inJournalRoot "docs"
-        tagMapFile <- inJournalRoot "tagmap"
+        tagsFolder <- lift $ inJournalRoot "tags"
+        docsFolder <- lift $ inJournalRoot "docs"
+        tagMapFile <- lift $ inJournalRoot "tagmap"
         let synchronizeFilesystems = (if reallyDoIt
                 then fsLinker
                 else const . dryRunLinker) tagsFolder docsFolder
-        noMissingPaths <- and <$> sequence
+        (guard . and) =<< (lift . sequence)
                 [
                         Dir.doesDirectoryExist tagsFolder `orPrintErr`
                                 ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
@@ -155,8 +120,7 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
                 ,       Dir.doesFileExist tagMapFile `orPrintErr`
                                 ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
                 ]
-        when noMissingPaths $
-                linkDocuments synchronizeFilesystems docsFolder tagMapFile
+        linkDocuments synchronizeFilesystems docsFolder tagMapFile
         where
         inJournalRoot = Dir.makeAbsolute . (journalRoot </>)
         orPrintErr q err = q >>= \b -> unless b (putStrLn err) $> b

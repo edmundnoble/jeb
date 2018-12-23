@@ -5,17 +5,18 @@ module J.Indexing.Streengs where
 
 import Prelude hiding((.), id)
 
+import Control.Applicative(Alternative(empty))
 import Control.Category(Category(..))
-import Control.Lens hiding ((<|))
+import Control.Monad(join)
+import Control.Monad.Trans(lift)
+import Control.Monad.Trans.Maybe(MaybeT(..))
+import Control.Lens(foldOf)
 import Data.Bifunctor(first)
 import Data.List(isPrefixOf)
-import Data.List.NonEmpty(NonEmpty(..))
 import Data.List.Split(splitWhen)
 import Data.Maybe(fromMaybe)
-import Data.Validation(Validation(..))
 
 import qualified Data.Map.Strict as Map
-import qualified Data.Validation as Validation
 
 import J.Indexing.Types
 
@@ -105,29 +106,34 @@ linesWithTags ls =
 -- Failure (AnyErrorReadingDocument NoTagSectionFound :| [])
 
 readPrefixedTags ::
-        (AsErrorReadingDocument e, AsErrorFindingTag e) =>
-        String -> TagMap -> Validation (NonEmpty e) [PrefixedTag]
+        String -> TagMap -> MaybeT IO [PrefixedTag]
 readPrefixedTags doc tagMap =
-        Validation.bindValidation ((fmap . traverse) (first pure . prefixTags) unPrefixedTags) id
+        join $ (fmap . traverse) prefixTags unPrefixedTags
         where
                 unPrefixedTags = readUnprefixedTags (lines doc)
                 prefixTags = flip getTagPrefixOrError tagMap
 
 readUnprefixedTags ::
-        AsErrorReadingDocument e =>
-        [String] -> Validation (NonEmpty e) [UnprefixedTag]
-readUnprefixedTags doc =
-        let locatedDocLines = zipWithIndex doc in
-        let tagLines = linesWithTags locatedDocLines in
-        let validTags = (fmap . fmap . fmap) parseTagValidated tagLines in
-        case validTags of
+        [String] -> MaybeT IO [UnprefixedTag]
+readUnprefixedTags doc = let
+        locatedDocLines = zipWithIndex doc
+        tagLines = linesWithTags locatedDocLines
+        parseTagOrReturn :: Located String -> Either (Located String) (Located [UnprefixedTag])
+        parseTagOrReturn n = maybe (Left n) Right $ traverse parseTag n
+        printParseError :: Located String -> MaybeT IO ()
+        printParseError = (*> empty) . lift . putStrLn . showTagsFailedToParse
+        convertErrs :: Either (MaybeT IO ()) [UnprefixedTag] -> MaybeT IO [UnprefixedTag]
+        convertErrs = either (const empty) pure
+        validTags :: Maybe (Located [Either (Located String) (Located [UnprefixedTag])])
+        validTags = (fmap . fmap . fmap) parseTagOrReturn tagLines
+        in case validTags of
                 Nothing ->
-                        Failure . pure $ review _NoTagSectionFound ()
-                Just (Located p xsm) ->
-                        case xsm of
-                                [] -> Failure . pure $ review _EmptyTagSection p
-                                _ -> (_anywhere =<<) <$>
-                                        traverse (first (pure . review _TagsFailedToParse)) xsm
+                        lift (putStrLn showNoTagSectionFound) *> empty
+                Just (Located p []) ->
+                        lift (putStrLn (showEmptyTagSection p)) *> empty
+                Just (Located _ xsm) ->
+                        convertErrs $ ((_anywhere =<<) <$>
+                                traverse (first printParseError) xsm)
 
 -- | Trims the beginning of a string, removing whitespace.
 -- | Only spaces are treated as whitespace deliberately.
@@ -136,9 +142,12 @@ trimStart :: String -> String
 trimStart = dropWhile (== ' ')
 
 takeAfter :: (a -> Bool) -> [Located a] -> Maybe (Located [Located a])
-takeAfter _ [] = Nothing
-takeAfter f (Located (Position p) x:xs) | f x = Just (Located (Position p) xs)
-takeAfter f (_:xs) = takeAfter f xs
+takeAfter _ [] =
+        Nothing
+takeAfter f (Located (Position p) (f -> True):xs) =
+        Just (Located (Position p) xs)
+takeAfter f (_:xs) =
+        takeAfter f xs
 
 zipWithIndex :: [a] -> [Located a]
 zipWithIndex xs = uncurry Located <$> zip (Position <$> [0..]) xs
@@ -152,21 +161,16 @@ parseTag l =
                 else
                         Nothing
 
-parseTagValidated ::
-        Located String ->
-        Validation (Located String) (Located [UnprefixedTag])
-parseTagValidated l@(Located p a) =
-        maybe (Failure l) (Success . Located p) (parseTag a)
-
 -- Since the TagMap only contains scoping information,
 -- we need to join the original tag onto the start.
 getTagPrefix :: UnprefixedTag -> TagMap -> Maybe PrefixedTag
 getTagPrefix (UnprefixedTag t) = fmap (PrefixedTag . (:) t) . Map.lookup t
 
-getTagPrefixOrError :: AsErrorFindingTag e =>
-        UnprefixedTag -> TagMap -> Validation e PrefixedTag
-getTagPrefixOrError t tagMap =
-        maybe ((Failure . review _CouldntFindTagPrefix) t) Success (getTagPrefix t tagMap)
+getTagPrefixOrError ::
+        UnprefixedTag -> TagMap -> MaybeT IO PrefixedTag
+getTagPrefixOrError t tagMap = case getTagPrefix t tagMap of
+        Nothing -> lift (putStrLn (showCouldntFindTagPrefix t)) *> empty
+        Just x -> MaybeT (pure (Just x))
 
 minimumIndent :: [String] -> Maybe Int
 minimumIndent =
@@ -203,7 +207,6 @@ minimumIndent =
 readBulletedTagMap :: [String] -> TagMap
 readBulletedTagMap [] = mempty
 readBulletedTagMap tagMapLines =
-        -- TODO: add Validation, proper error for unproportional indenting
         loop [] $ indentForwardDifferences $ separateIndents <$> bulletLines
         where
         bulletLines = filter (isPrefixOf "*" . trimStart) tagMapLines

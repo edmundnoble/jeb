@@ -14,7 +14,7 @@
 
 module J.Indexing.Types where
 
-import Control.Lens(foldMapOf, makeClassyPrisms, makeLenses, makePrisms, over, traverseOf)
+import Control.Lens(foldMapOf, makeLenses, over, traverseOf)
 import Control.Monad(join)
 import Data.Algorithm.Diff(Diff(..), getDiffBy)
 import Data.Coerce(coerce)
@@ -263,84 +263,54 @@ tagFSToDocMap = Map.toAscList . go []
 docMapToTagFS :: [(String, [PrefixedTag])] -> [TagFS]
 docMapToTagFS = foldl' (\b (n, ts) -> foldl' (flip (insertFS n)) b ts) []
 
-data ErrorReadingDocument
-        = NoTagSectionFound
-        | EmptyTagSection Position
-        | TagsFailedToParse (Located String)
-        | MultipleTagSections [Position]
-        | EmptyDocument
-
 makeIndent :: Int -> String
 makeIndent n = join $ replicate n "  "
 
 indentLines :: Int -> String -> String
 indentLines n = unlines . fmap (makeIndent n ++) . lines
 
-instance Show ErrorReadingDocument where
-        show NoTagSectionFound = "NoTagSectionFound"
-        show (EmptyTagSection (Position line)) = "EmptyTagSection at line " ++ show line
-        show (TagsFailedToParse t) =
-                "TagsFailedToParse on line " ++ (show . _location) t ++ ":\n" ++
-                indentLines 1 (show (_anywhere t))
-        show (MultipleTagSections xs) = "MultipleTagSections on lines " ++ show xs
-        show EmptyDocument = "EmptyDocument"
+showNoTagSectionFound :: String
+showNoTagSectionFound = "NoTagSectionFound"
 
-makeClassyPrisms 'NoTagSectionFound
+showEmptyTagSection :: Position -> String
+showEmptyTagSection (Position line) = "EmptyTagSection at line " ++ show line
+
+showTagsFailedToParse :: Located String -> String
+showTagsFailedToParse t =
+        "TagsFailedToParse on line " ++ (show . _location) t ++ ":\n" ++
+        indentLines 1 (show (_anywhere t))
+
+showMultipleTagSections :: [Position] -> String
+showMultipleTagSections xs =
+        "MultipleTagSections on lines " ++ show xs
+
+showEmptyDocument :: String
+showEmptyDocument = "EmptyDocument"
+
+showInvalidIndentation :: Position -> Int -> Int -> String
+showInvalidIndentation (Position p) minIndent indent =
+        "  At line " ++
+        show p ++
+        ", with minimum indentation at " ++
+        show minIndent ++
+        ", the indentation was " ++
+        show indent ++
+        " which is not divisible by the minimum." ++
+        "  I don't know what level of nesting that is."
+
+showCouldntFindTagPrefix :: UnprefixedTag -> String
+showCouldntFindTagPrefix u =
+        "Couldn't find tag prefix " ++ show u
+
+showUnresolvedTag :: UnprefixedTag -> String
+showUnresolvedTag s =
+        "Unresolved tag " ++ show s
 
 data ErrorReadingTagMap = InvalidIndentation Position Int Int
         deriving Show
 
-makeClassyPrisms 'InvalidIndentation
-
 newtype ErrorFindingTag = CouldntFindTagPrefix UnprefixedTag
         deriving Show
 
-makeClassyPrisms 'CouldntFindTagPrefix
-
-newtype ErrorWritingTagLinks = UnresolvedTag String
+newtype ErrorWritingTagLinks = UnresolvedTag UnprefixedTag
         deriving Show
-
-makeClassyPrisms 'UnresolvedTag
-
--- invariant: must be at least one error in an AllErrors.
-data AllErrors =
-        AllErrors [ErrorReadingTagMap] [ErrorReadingDocument] [ErrorFindingTag] [ErrorWritingTagLinks]
-        deriving (Show)
-
-instance Semigroup AllErrors where
-        (AllErrors ertms erds efts ewtls) <> (AllErrors ertms' erds' efts' ewtls') =
-                AllErrors (ertms ++ ertms') (erds ++ erds') (efts ++ efts') (ewtls ++ ewtls')
-
-instance Monoid AllErrors where
-        mappend = (<>)
-        mempty = AllErrors [] [] [] []
-
-collectErrors :: [AnyErrors] -> AllErrors
-collectErrors = go mempty where
-        go (AllErrors ertms erds efts ewtls) (x:xs) = case x of
-                AnyErrorReadingTagMap e -> go (AllErrors (e:ertms) erds efts ewtls) xs
-                AnyErrorReadingDocument e -> go (AllErrors ertms (e:erds) efts ewtls) xs
-                AnyErrorFindingTag e -> go (AllErrors ertms erds (e:efts) ewtls) xs
-                AnyErrorWritingTagLinks e -> go (AllErrors ertms erds efts (e:ewtls)) xs
-        go acc [] = acc
-
-data AnyErrors
-        = AnyErrorReadingDocument ErrorReadingDocument
-        | AnyErrorReadingTagMap ErrorReadingTagMap
-        | AnyErrorFindingTag ErrorFindingTag
-        | AnyErrorWritingTagLinks ErrorWritingTagLinks
-        deriving Show
-
-makePrisms 'AnyErrorReadingDocument
-
-instance AsErrorReadingDocument AnyErrors where
-        _ErrorReadingDocument = _AnyErrorReadingDocument
-
-instance AsErrorReadingTagMap AnyErrors where
-        _ErrorReadingTagMap = _AnyErrorReadingTagMap
-
-instance AsErrorFindingTag AnyErrors where
-        _ErrorFindingTag = _AnyErrorFindingTag
-
-instance AsErrorWritingTagLinks AnyErrors where
-        _ErrorWritingTagLinks = _AnyErrorWritingTagLinks
