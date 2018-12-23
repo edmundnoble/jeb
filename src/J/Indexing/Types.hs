@@ -12,7 +12,18 @@
 {-# language TemplateHaskell #-}
 {-# language ViewPatterns #-}
 
-module J.Indexing.Types where
+module J.Indexing.Types(
+        TagMap, PrefixedTag(..), UnprefixedTag(..)
+        ,TagFS(..)
+        ,docMapToTagFS
+        ,diffMultipleTagFS
+        ,Located(..), Position(..)
+        ,Linker(..), link
+        ,showCouldntFindTagPrefix, showEmptyDocument, showEmptyTagSection
+        ,showInvalidIndentation, showMultipleTagSections, showNoTagSectionFound
+        ,showTagsFailedToParse, showUnresolvedTag
+        ,anywhere, location
+        ) where
 
 import Control.Lens(foldMapOf, makeLenses, over, traverseOf)
 import Control.Monad(join)
@@ -68,9 +79,6 @@ tagFSToTree (DocFile n) = Tree n []
 label :: Tree a -> a
 label (Tree a _) = a
 
-children :: Tree a -> [Tree a]
-children (Tree _ cs) = cs
-
 data DiffPrinter a
         = DiffPrinter {
                 _printLabel :: a -> PP.Doc,
@@ -89,6 +97,7 @@ standardPrinter f =
 -- | Given any ordinary diff algorithm and a way to print the labels of a rose
 -- | tree, prints a diff of two lists of rose trees.
 -- | If there is no difference, returns `Nothing`.
+-- | Turns out, this is mostly the same thing tree-diff provides.
 diffT ::
         Eq a =>
         (forall x. (x -> x -> Bool) -> [x] -> [x] -> [Diff x]) ->
@@ -109,7 +118,8 @@ diffT diffBy printer = go where
                 loop = catMaybes $ recurse <$> diff in
                 if null loop then Nothing else Just (PP.vcat loop)
 
--- | Prints a rose tree in the style of a filesystem.
+-- | Prints a rose tree in the style I want filesystems printed, similarly
+-- | to tree(1).
 -- Examples:
 -- >>> prettyFS (Tree "doc" [])
 -- doc
@@ -178,10 +188,6 @@ insertFS n (PrefixedTag tt) = go (reverse tt)
 
         go (p:t) (replace (tryInsert p t) -> Just xs) = xs
         go ss xs = singletonTagFS n (PrefixedTag ss) : xs
-
-fsName :: TagFS -> String
-fsName (DocFile n) = n
-fsName (TagDir n _) = n
 
 -- | Computes the difference between two tag filesystems, if there is one.
 -- | Has colored output.
@@ -305,12 +311,3 @@ showCouldntFindTagPrefix u =
 showUnresolvedTag :: UnprefixedTag -> String
 showUnresolvedTag s =
         "Unresolved tag " ++ show s
-
-data ErrorReadingTagMap = InvalidIndentation Position Int Int
-        deriving Show
-
-newtype ErrorFindingTag = CouldntFindTagPrefix UnprefixedTag
-        deriving Show
-
-newtype ErrorWritingTagLinks = UnresolvedTag UnprefixedTag
-        deriving Show

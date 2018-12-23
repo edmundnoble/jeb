@@ -23,7 +23,7 @@ import Data.Functor(($>), void)
 import Data.List(isSuffixOf)
 import System.FilePath((</>))
 import System.Posix.Files(createSymbolicLink)
-import Text.PrettyPrint.ANSI.Leijen(putDoc, pretty)
+import Text.PrettyPrint.ANSI.Leijen(putDoc)
 
 import qualified System.Directory as Dir
 import qualified System.FilePath as FP

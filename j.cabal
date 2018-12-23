@@ -22,15 +22,11 @@ executable j
   build-depends:      base >=4.10 && <4.13
                     , ansi-terminal
                     , ansi-wl-pprint
-                    , comonad
-                    , contravariant
                     , containers
                     , deepseq
                     , directory
                     , Diff
                     , filepath
-                    , ghc-prim
-                    , IntervalMap
                     , lens
                     , mtl
                     , optparse-applicative
@@ -40,7 +36,6 @@ executable j
                     , time
                     , transformers
                     , unix
-                    , validation
                     , j-lib
   default-language:   Haskell2010
 
@@ -54,16 +49,12 @@ library j-lib
   build-depends:      base >=4.10 && <4.13
                     , ansi-terminal
                     , ansi-wl-pprint
-                    , comonad
-                    , contravariant
                     , containers
                     , deepseq
                     , directory
                     , Diff
                     , filepath
                     , foldl
-                    , ghc-prim
-                    , IntervalMap
                     , lens
                     , mtl
                     , optparse-applicative
@@ -73,7 +64,6 @@ library j-lib
                     , time
                     , transformers
                     , unix
-                    , validation
   default-language:   Haskell2010
 
 test-suite doctests

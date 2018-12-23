@@ -1,7 +1,7 @@
 {-# language ViewPatterns #-}
 {-# language TupleSections #-}
 
-module J.Indexing.Streengs where
+module J.Indexing.Streengs(readBulletedTagMap,readPrefixedTags) where
 
 import Prelude hiding((.), id)
 
@@ -100,10 +100,6 @@ linesWithTags ls =
 
 -- | Given a tagged document and tagmap, associates all of the document's tags
 -- | with the path from each to the root of the tagmap.
---
--- Examples:
--- >>> readPrefixedTags "" undefined :: Validation (NonEmpty AnyErrors) [PrefixedTag]
--- Failure (AnyErrorReadingDocument NoTagSectionFound :| [])
 
 readPrefixedTags ::
         String -> TagMap -> MaybeT IO [PrefixedTag]
