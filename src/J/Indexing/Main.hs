@@ -16,7 +16,6 @@ import Control.Category(Category(..))
 import Control.DeepSeq(force)
 import Control.Exception(SomeException, evaluate, try)
 import Control.Monad(unless)
-import Control.Monad.Trans.Maybe(MaybeT)
 import Control.Monad.Reader
 import Data.Foldable(traverse_)
 import Data.Functor(($>), void)
@@ -31,6 +30,7 @@ import qualified System.IO.Unsafe as U
 
 import J.Indexing.Types
 import J.Indexing.Streengs
+import J.ErrT
 
 ignoreSyncErrors :: IO () -> IO ()
 ignoreSyncErrors io = void (try io :: IO (Either SomeException ()))
@@ -91,7 +91,7 @@ linkDocuments ::
         Linker (IO ()) ->
         FilePath ->
         FilePath ->
-        MaybeT IO ()
+        ErrT IO ()
 linkDocuments linker docsFolder tagMapFile = do
         tagMap <- lift $ readBulletedTagMap . lines <$> readFile tagMapFile
         _ <- lift $ evaluate (force tagMap)
@@ -100,10 +100,12 @@ linkDocuments linker docsFolder tagMapFile = do
         let readDocNamed n = ((,) n) <$> readFile (docsFolder </> n)
         namedDocs <- lift $ traverse readDocNamed docNames
         _ <- lift $ evaluate (force namedDocs)
-        tags <- sequenceA $ sequenceA <$> (fmap . fmap) (flip readPrefixedTags tagMap) namedDocs
+        let g = (fmap . fmap) (flip readPrefixedTags tagMap) namedDocs
+        let k = g :: [(String, ErrT IO [PrefixedTag])]
+        tags <- sequenceA $ sequenceA <$> g
         lift $ (link linker . docMapToTagFS) tags
 
-refreshIndex :: FilePath -> Bool -> MaybeT IO ()
+refreshIndex :: FilePath -> Bool -> ErrT IO ()
 refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
         tagsFolder <- lift $ inJournalRoot "tags"
         docsFolder <- lift $ inJournalRoot "docs"
@@ -111,7 +113,7 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
         let synchronizeFilesystems = (if reallyDoIt
                 then fsLinker
                 else const . dryRunLinker) tagsFolder docsFolder
-        (guard . and) =<< (lift . sequence)
+        void $ sequenceA
                 [
                         Dir.doesDirectoryExist tagsFolder `orPrintErr`
                                 ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
@@ -123,4 +125,7 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
         linkDocuments synchronizeFilesystems docsFolder tagMapFile
         where
         inJournalRoot = Dir.makeAbsolute . (journalRoot </>)
-        orPrintErr q err = q >>= \b -> unless b (putStrLn err) $> b
+        orPrintErr :: IO Bool -> String -> ErrT IO ()
+        orPrintErr q err = ErrT $ flip fmap q $ \case
+                True -> Right ()
+                False -> Left (putStrLn err)

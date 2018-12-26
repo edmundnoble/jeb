@@ -43,6 +43,7 @@ library j-lib
   hs-source-dirs:     src
   ghc-options:        -Wall
   exposed-modules:    J.CLI
+                    , J.ErrT
                     , J.Logging
                     , J.Indexing.Main, J.Indexing.Types
                     , J.Indexing.Streengs

@@ -9,14 +9,16 @@ import Control.Applicative(Alternative(empty))
 import Control.Category(Category(..))
 import Control.Monad(join)
 import Control.Monad.Trans(lift)
-import Control.Monad.Trans.Maybe(MaybeT(..))
 import Control.Lens(foldOf)
 import Data.Bifunctor(first)
+import Data.Functor(($>))
 import Data.List(isPrefixOf)
 import Data.List.Split(splitWhen)
 import Data.Maybe(fromMaybe)
 
 import qualified Data.Map.Strict as Map
+
+import J.ErrT
 
 import J.Indexing.Types
 
@@ -102,7 +104,7 @@ linesWithTags ls =
 -- | with the path from each to the root of the tagmap.
 
 readPrefixedTags ::
-        String -> TagMap -> MaybeT IO [PrefixedTag]
+        String -> TagMap -> ErrT IO [PrefixedTag]
 readPrefixedTags doc tagMap =
         join $ (fmap . traverse) prefixTags unPrefixedTags
         where
@@ -110,23 +112,24 @@ readPrefixedTags doc tagMap =
                 prefixTags = flip getTagPrefixOrError tagMap
 
 readUnprefixedTags ::
-        [String] -> MaybeT IO [UnprefixedTag]
+        [String] -> ErrT IO [UnprefixedTag]
 readUnprefixedTags doc = let
         locatedDocLines = zipWithIndex doc
         tagLines = linesWithTags locatedDocLines
         parseTagOrReturn :: Located String -> Either (Located String) (Located [UnprefixedTag])
         parseTagOrReturn n = maybe (Left n) Right $ traverse parseTag n
-        printParseError :: Located String -> MaybeT IO ()
-        printParseError = (*> empty) . lift . putStrLn . showTagsFailedToParse
-        convertErrs :: Either (MaybeT IO ()) [UnprefixedTag] -> MaybeT IO [UnprefixedTag]
-        convertErrs = either (const empty) pure
         validTags :: Maybe (Located [Either (Located String) (Located [UnprefixedTag])])
         validTags = (fmap . fmap . fmap) parseTagOrReturn tagLines
+        printParseError :: Located String -> ErrT IO ()
+        printParseError = err . showTagsFailedToParse
+        convertErrs :: Either (ErrT IO ()) [UnprefixedTag] -> ErrT IO [UnprefixedTag]
+        convertErrs (Left fea) = fea $> []
+        convertErrs (Right us) = pure us
         in case validTags of
                 Nothing ->
-                        lift (putStrLn showNoTagSectionFound) *> empty
+                        err showNoTagSectionFound
                 Just (Located p []) ->
-                        lift (putStrLn (showEmptyTagSection p)) *> empty
+                        err (showEmptyTagSection p)
                 Just (Located _ xsm) ->
                         convertErrs $ ((_anywhere =<<) <$>
                                 traverse (first printParseError) xsm)
@@ -163,10 +166,10 @@ getTagPrefix :: UnprefixedTag -> TagMap -> Maybe PrefixedTag
 getTagPrefix (UnprefixedTag t) = fmap (PrefixedTag . (:) t) . Map.lookup t
 
 getTagPrefixOrError ::
-        UnprefixedTag -> TagMap -> MaybeT IO PrefixedTag
+        UnprefixedTag -> TagMap -> ErrT IO PrefixedTag
 getTagPrefixOrError t tagMap = case getTagPrefix t tagMap of
-        Nothing -> lift (putStrLn (showCouldntFindTagPrefix t)) *> empty
-        Just x -> MaybeT (pure (Just x))
+        Nothing -> err (showCouldntFindTagPrefix t)
+        Just x -> pure x
 
 minimumIndent :: [String] -> Maybe Int
 minimumIndent =
