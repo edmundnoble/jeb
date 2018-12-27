@@ -8,8 +8,8 @@ import Options.Applicative(ParserResult(..), execParserPure)
 import Options.Applicative.Builder(defaultPrefs)
 import System.Environment(getArgs)
 
-import J.CLI
-import J.ErrT
+import Jeb.CLI
+import Jeb.ErrT
 
 mainA :: [String] -> IO ()
 mainA args = do

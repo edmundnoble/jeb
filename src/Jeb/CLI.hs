@@ -1,13 +1,13 @@
 {-# language ApplicativeDo #-}
 {-# language NoMonomorphismRestriction #-}
 
-module J.CLI(opts) where
+module Jeb.CLI(opts) where
 
 import Data.Semigroup((<>))
 import qualified Options.Applicative as O
 
-import J.ErrT
-import qualified J.Indexing.Main as Indexing
+import Jeb.ErrT
+import qualified Jeb.Indexing.Main as Indexing
 
 journalRoot :: O.Parser FilePath
 journalRoot = O.strOption

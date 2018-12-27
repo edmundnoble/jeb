@@ -1,7 +1,7 @@
 {-# language ViewPatterns #-}
 {-# language TupleSections #-}
 
-module J.Indexing.Streengs(readBulletedTagMap,readPrefixedTags) where
+module Jeb.Indexing.Streengs(readBulletedTagMap,readPrefixedTags) where
 
 import Prelude hiding((.), id)
 
@@ -16,9 +16,9 @@ import Data.Maybe(fromMaybe)
 
 import qualified Data.Map.Strict as Map
 
-import J.ErrT
+import Jeb.ErrT
 
-import J.Indexing.Types
+import Jeb.Indexing.Types
 
 -- | Does a string start with "Tags"?
 --

@@ -9,7 +9,7 @@
 {-# language NoMonomorphismRestriction #-}
 {-# language ViewPatterns #-}
 
-module J.Indexing.Main(refreshIndex) where
+module Jeb.Indexing.Main(refreshIndex) where
 
 import Prelude hiding ((.), id)
 import Control.Category(Category(..))
@@ -27,9 +27,9 @@ import qualified System.Directory as Dir
 import qualified System.FilePath as FP
 import qualified System.IO.Unsafe as U
 
-import J.Indexing.Types
-import J.Indexing.Streengs
-import J.ErrT
+import Jeb.Indexing.Types
+import Jeb.Indexing.Streengs
+import Jeb.ErrT
 
 ignoreSyncErrors :: IO () -> IO ()
 ignoreSyncErrors io = void (try io :: IO (Either SomeException ()))

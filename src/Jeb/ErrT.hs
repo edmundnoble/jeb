@@ -2,7 +2,7 @@
 {-# language LambdaCase #-}
 {-# language NoMonomorphismRestriction #-}
 
-module J.ErrT where
+module Jeb.ErrT where
 
 import Control.Monad.Fail
 import Control.Monad.Trans.Class(MonadTrans)

@@ -2,7 +2,7 @@
              FunctionalDependencies, MultiParamTypeClasses, RankNTypes,
              TemplateHaskell #-}
 
-module J.Logging (
+module Jeb.Logging (
   Log(..), LogLevel(..), Products(..), levelledLog,
   HasLog(..)
   ) where

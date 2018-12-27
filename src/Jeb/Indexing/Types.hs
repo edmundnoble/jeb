@@ -12,7 +12,7 @@
 {-# language TemplateHaskell #-}
 {-# language ViewPatterns #-}
 
-module J.Indexing.Types(
+module Jeb.Indexing.Types(
         TagMap, PrefixedTag(..), UnprefixedTag(..)
         ,TagFS(..)
         ,docMapToTagFS, tagFSToDocMap
