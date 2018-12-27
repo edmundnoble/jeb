@@ -15,7 +15,7 @@ mainA :: [String] -> IO ()
 mainA args = do
         (case execParserPure defaultPrefs opts args of
                 Success act ->
-                        runErrT act
+                        terminateErrT act
                 Failure f -> error $
                         "Error parsing arguments: \n" ++ show f
                 CompletionInvoked _ -> error

@@ -15,10 +15,9 @@ import Prelude hiding ((.), id)
 import Control.Category(Category(..))
 import Control.DeepSeq(force)
 import Control.Exception(SomeException, evaluate, try)
-import Control.Monad(unless)
 import Control.Monad.Reader
 import Data.Foldable(traverse_)
-import Data.Functor(($>), void)
+import Data.Functor(void)
 import Data.List(isSuffixOf)
 import System.FilePath((</>))
 import System.Posix.Files(createSymbolicLink)
@@ -80,8 +79,7 @@ dryRunLinker tagsFolder = Linker dryRunLink
         dryRunLink fss = do
                 contents <- Dir.listDirectory tagsFolder
                 oldFS <- traverse (readTagFS . (tagsFolder </>)) contents
-                let diff = diffMultipleTagFS oldFS fss
-                case diff of
+                case diffMultipleTagFS oldFS fss of
                         Nothing -> putStrLn "Nothing to be done!"
                         Just p -> putDoc p *> putStrLn ""
 
@@ -100,9 +98,8 @@ linkDocuments linker docsFolder tagMapFile = do
         let readDocNamed n = ((,) n) <$> readFile (docsFolder </> n)
         namedDocs <- lift $ traverse readDocNamed docNames
         _ <- lift $ evaluate (force namedDocs)
-        let g = (fmap . fmap) (flip readPrefixedTags tagMap) namedDocs
-        let k = g :: [(String, ErrT IO [PrefixedTag])]
-        tags <- sequenceA $ sequenceA <$> g
+        let tagsE = (fmap . fmap) (flip readPrefixedTags tagMap) namedDocs
+        tags <- sequenceErrs $ sequenceA <$> tagsE
         lift $ (link linker . docMapToTagFS) tags
 
 refreshIndex :: FilePath -> Bool -> ErrT IO ()
@@ -125,7 +122,3 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
         linkDocuments synchronizeFilesystems docsFolder tagMapFile
         where
         inJournalRoot = Dir.makeAbsolute . (journalRoot </>)
-        orPrintErr :: IO Bool -> String -> ErrT IO ()
-        orPrintErr q err = ErrT $ flip fmap q $ \case
-                True -> Right ()
-                False -> Left (putStrLn err)

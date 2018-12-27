@@ -15,7 +15,7 @@
 module J.Indexing.Types(
         TagMap, PrefixedTag(..), UnprefixedTag(..)
         ,TagFS(..)
-        ,docMapToTagFS
+        ,docMapToTagFS, tagFSToDocMap
         ,diffMultipleTagFS
         ,Located(..), Position(..)
         ,Linker(..), link

@@ -5,10 +5,8 @@ module J.Indexing.Streengs(readBulletedTagMap,readPrefixedTags) where
 
 import Prelude hiding((.), id)
 
-import Control.Applicative(Alternative(empty))
 import Control.Category(Category(..))
 import Control.Monad(join)
-import Control.Monad.Trans(lift)
 import Control.Lens(foldOf)
 import Data.Bifunctor(first)
 import Data.Functor(($>))
