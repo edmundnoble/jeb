@@ -21,7 +21,7 @@ import Data.Functor(void)
 import Data.List(isSuffixOf)
 import System.FilePath((</>))
 import System.Posix.Files(createSymbolicLink)
-import Text.PrettyPrint.ANSI.Leijen(putDoc)
+import Text.PrettyPrint.ANSI.Leijen(indent, text, putDoc)
 
 import qualified System.Directory as Dir
 import qualified System.FilePath as FP
@@ -110,14 +110,14 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
         let synchronizeFilesystems = (if reallyDoIt
                 then fsLinker
                 else const . dryRunLinker) tagsFolder docsFolder
-        void $ sequenceA
+        void $ mapErrs (fmap (indent 2)) $ sequenceErrs
                 [
                         Dir.doesDirectoryExist tagsFolder `orPrintErr`
-                                ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
+                                text ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
                 ,       Dir.doesDirectoryExist docsFolder `orPrintErr`
-                                ("Docs folder " ++ docsFolder ++ " doesn't exist!")
+                                text ("Docs folder " ++ docsFolder ++ " doesn't exist!")
                 ,       Dir.doesFileExist tagMapFile `orPrintErr`
-                                ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
+                                text ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
                 ]
         linkDocuments synchronizeFilesystems docsFolder tagMapFile
         where

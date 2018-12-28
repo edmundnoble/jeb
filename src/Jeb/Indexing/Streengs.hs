@@ -74,7 +74,8 @@ removeTagHeader = dropEmpties . takeAfter isTagHeader
         where
                 dropEmpties = (fmap . fmap) $ dropWhile (all (== ' ') . _anywhere)
 
--- | Given the entire document, extract every line has a tag on it
+-- | Given the entire document, extract every line has a tag on it,
+-- | also providing the location of the first line *before* the first tag.
 --
 -- Examples:
 -- >>> :{
@@ -119,15 +120,15 @@ readUnprefixedTags doc = let
         validTags :: Maybe (Located [Either (Located String) (Located [UnprefixedTag])])
         validTags = (fmap . fmap . fmap) parseTagOrReturn tagLines
         printParseError :: Located String -> ErrT IO ()
-        printParseError = err . showTagsFailedToParse
+        printParseError = raiseErr . showTagsFailedToParse
         convertErrs :: Either (ErrT IO ()) [UnprefixedTag] -> ErrT IO [UnprefixedTag]
         convertErrs (Left fea) = fea $> []
         convertErrs (Right us) = pure us
         in case validTags of
                 Nothing ->
-                        err showNoTagSectionFound
+                        raiseErr showNoTagSectionFound
                 Just (Located p []) ->
-                        err (showEmptyTagSection p)
+                        raiseErr (showEmptyTagSection p)
                 Just (Located _ xsm) ->
                         convertErrs $ ((_anywhere =<<) <$>
                                 traverse (first printParseError) xsm)
@@ -166,7 +167,7 @@ getTagPrefix (UnprefixedTag t) = fmap (PrefixedTag . (:) t) . Map.lookup t
 getTagPrefixOrError ::
         UnprefixedTag -> TagMap -> ErrT IO PrefixedTag
 getTagPrefixOrError t tagMap = case getTagPrefix t tagMap of
-        Nothing -> err (showCouldntFindTagPrefix t)
+        Nothing -> raiseErr (showCouldntFindTagPrefix t)
         Just x -> pure x
 
 minimumIndent :: [String] -> Maybe Int
