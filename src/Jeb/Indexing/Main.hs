@@ -21,7 +21,7 @@ import Data.Functor(void)
 import Data.List(isSuffixOf)
 import System.FilePath((</>))
 import System.Posix.Files(createSymbolicLink)
-import Text.PrettyPrint.ANSI.Leijen(indent, text, putDoc)
+import Text.PrettyPrint.ANSI.Leijen(indent, putDoc, red)
 
 import qualified System.Directory as Dir
 import qualified System.FilePath as FP
@@ -85,22 +85,22 @@ dryRunLinker tagsFolder = Linker dryRunLink
 
 -- | Given a linker in IO, create links for all of the documents in `docsFolder`,
 -- | inside of `tagsFolder`, using `tagMapFile` as a reference for tag prefixes.
-linkDocuments ::
-        Linker (IO ()) ->
+readDocMap ::
         FilePath ->
         FilePath ->
-        ErrT IO ()
-linkDocuments linker docsFolder tagMapFile = do
-        tagMap <- lift $ readBulletedTagMap . lines <$> readFile tagMapFile
-        _ <- lift $ evaluate (force tagMap)
-        docContents <- lift $ Dir.listDirectory docsFolder
-        let docNames = filter isValidDocFileName docContents
-        let readDocNamed n = ((,) n) <$> readFile (docsFolder </> n)
-        namedDocs <- lift $ traverse readDocNamed docNames
-        _ <- lift $ evaluate (force namedDocs)
-        let tagsE = (fmap . fmap) (flip readPrefixedTags tagMap) namedDocs
+        ErrT IO [(String, [PrefixedTag])]
+readDocMap docsFolder tagMapFile = do
+        tagsE <- lift $ do
+                tagMap <- readBulletedTagMap . lines <$> readFile tagMapFile
+                _ <- evaluate (force tagMap)
+                docContents <- Dir.listDirectory docsFolder
+                let docNames = filter isValidDocFileName docContents
+                let readDocNamed n = ((,) n) <$> readFile (docsFolder </> n)
+                namedDocs <- traverse readDocNamed docNames
+                _ <- evaluate (force namedDocs)
+                return $ (fmap . fmap) (flip readPrefixedTags tagMap) namedDocs
         tags <- sequenceErrs $ sequenceA <$> tagsE
-        lift $ (link linker . docMapToTagFS) tags
+        return $ tags
 
 refreshIndex :: FilePath -> Bool -> ErrT IO ()
 refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
@@ -110,15 +110,16 @@ refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
         let synchronizeFilesystems = (if reallyDoIt
                 then fsLinker
                 else const . dryRunLinker) tagsFolder docsFolder
-        void $ mapErrs (fmap (indent 2)) $ sequenceErrs
+        void $ mapErr (red . indent 2) $ sequenceErrs
                 [
                         Dir.doesDirectoryExist tagsFolder `orPrintErr`
-                                text ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
+                                ("Tags folder " ++ tagsFolder ++ " doesn't exist!")
                 ,       Dir.doesDirectoryExist docsFolder `orPrintErr`
-                                text ("Docs folder " ++ docsFolder ++ " doesn't exist!")
+                                ("Docs folder " ++ docsFolder ++ " doesn't exist!")
                 ,       Dir.doesFileExist tagMapFile `orPrintErr`
-                                text ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
+                                ("Tag map file " ++ tagMapFile ++ " doesn't exist!")
                 ]
-        linkDocuments synchronizeFilesystems docsFolder tagMapFile
+        docMap <- readDocMap docsFolder tagMapFile
+        lift (link synchronizeFilesystems (docMapToTagFS docMap))
         where
         inJournalRoot = Dir.makeAbsolute . (journalRoot </>)
