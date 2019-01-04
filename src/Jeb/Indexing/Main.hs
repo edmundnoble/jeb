@@ -100,7 +100,7 @@ readDocMap docsFolder tagMapFile = do
                 _ <- evaluate (force namedDocs)
                 return $ (fmap . fmap) (flip readPrefixedTags tagMap) namedDocs
         tags <- sequenceErrs $ sequenceA <$> tagsE
-        return $ tags
+        return tags
 
 refreshIndex :: FilePath -> Bool -> ErrT IO ()
 refreshIndex (dropWhile (== ' ') -> journalRoot) reallyDoIt = do
