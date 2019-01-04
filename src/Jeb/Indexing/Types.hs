@@ -17,6 +17,7 @@ module Jeb.Indexing.Types(
         ,TagFS(..)
         ,docMapToTagFS, tagFSToDocMap
         ,diffMultipleTagFS
+        ,sortTagFS, sortTagFSS
         ,Located(..), Position(..)
         ,Linker(..), link
         ,showCouldntFindTagPrefix, showEmptyDocument, showEmptyTagSection
@@ -31,7 +32,7 @@ import Data.Algorithm.Diff(Diff(..), getDiffBy)
 import Data.Coerce(coerce)
 import Data.Function(on)
 import Data.Map.Strict(Map)
-import Data.List(foldl')
+import Data.List(foldl', sortOn)
 import Data.Maybe(catMaybes)
 
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
@@ -67,6 +68,17 @@ newtype PrefixedTag = PrefixedTag [String]
         deriving Show
 
 data TagFS = TagDir !String ![TagFS] | DocFile !String deriving (Eq, Ord)
+
+fsName :: TagFS -> String
+fsName (DocFile n) = n
+fsName (TagDir n _) = n
+
+sortTagFSS :: [TagFS] -> [TagFS]
+sortTagFSS xs = sortOn fsName (sortTagFS <$> xs)
+
+sortTagFS :: TagFS -> TagFS
+sortTagFS (DocFile n) = DocFile n
+sortTagFS (TagDir n ds) = TagDir n (sortTagFSS ds)
 
 data Tree a = Tree a [Tree a]
 

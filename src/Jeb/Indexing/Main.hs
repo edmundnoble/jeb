@@ -79,7 +79,7 @@ dryRunLinker tagsFolder = Linker dryRunLink
         dryRunLink fss = do
                 contents <- Dir.listDirectory tagsFolder
                 oldFS <- traverse (readTagFS . (tagsFolder </>)) contents
-                case diffMultipleTagFS oldFS fss of
+                case diffMultipleTagFS (sortTagFSS oldFS) (sortTagFSS fss) of
                         Nothing -> putStrLn "Nothing to be done!"
                         Just p -> putDoc p *> putStrLn ""
 
